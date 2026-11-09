@@ -28,47 +28,47 @@
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 
-最近验证（2026-11-09）：`pnpm test` 27 通过；`node scripts/nightwatch.mjs smoke` 通过；
-`dump` 里是 `nightwatch-guard` + `nightwatch-agent`。
+最近验证（2026-11-09）：`pnpm test` **32 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+`node scripts/nightwatch.mjs tick <home>` 在临时 home 里跑通完整巡检（无 DSH、无模型），
+`dist/inspect.js` 的依赖闭包里没有任何 `@deepseek-ai` 引用。
 
 ## 代码地图
 
 | 文件 | 负责 |
 |---|---|
 | `src/index.ts` | 插件入口、Config、路径校验、注册工具 |
+| `src/inspect.ts` | **巡检管线**：采集 → 落盘 → 规则 → 状态复核 → 日报；不 import DSH，tick 直接调用 |
+| `src/health.ts` | 采集健康：`ok / partial / failed / disabled`，由 evidence 退出码推导 |
 | `src/collect.ts` `src/parse.ts` | 只读采集（端口/SSH/备份）与纯解析；命令写死 |
 | `src/store.ts` | `watch.jsonl` 只追加 + `watch.db`（`node:sqlite`）物化视图 |
 | `src/rules.ts` | 基线差分与规则，finding 带 `observationId` |
-| `src/report.ts` | 日报 Markdown 渲染 |
-| `src/tools.ts` | 五个工具与共享的采集/报告流程 |
+| `src/report.ts` | 日报 Markdown 渲染（未关闭风险 / 采集健康 / 盲区） |
+| `src/tools.ts` | **薄适配层**：五个 `watch_*` 工具，只转调 `inspect.ts`，不含业务规则 |
 | `src/propose.ts` | 修复计划（改哪行、风险、回滚、验证） |
 | `src/apply.ts` | 应用计划（仅三种 SSH 改行；备份/校验/回滚） |
-| `*.test.ts` | 解析、存储重建、规则、工具端到端、提案、执行 |
+| `*.test.ts` | 解析、存储重建、规则、工具端到端、巡检管线、提案、执行 |
 
-## 评审 P0（未修，按这个顺序）
+## 评审 P0 状态（按这个顺序）
 
 以 `项目评审-2026-11-09.md` 为准，行号可能有偏移（代码已迁到本仓库）：
 
-1. **日报不跑规则**：`writeReport` 只读已有 finding。改成统一巡检管线：
-   采集 → 持久化 → 规则 → 状态复核 → 日报；日报直接复用这条管线。
-2. **采集失败被写成消失**：给 `Observation` 加 `status: ok | partial | failed | disabled`、错误原因、
-   成功时间与有效期；失败采集不参与 diff，不证明“风险消失”。
-3. **漏报**：端口要比对监听地址/暴露范围（`127.0.0.1` → `0.0.0.0` 必须报），
+1. ✅ **日报不跑规则**：已修。`writeReport` / `tick` 都走 `inspect.ts` 的统一管线，首次直接要日报也会跑规则。
+2. 🟡 **采集失败被写成消失**：`Observation` 已有 `status`，报告有“检查盲区”，`takeDiff` 不再把没读到的说成“消失”；还缺错误原因、有效期和规则侧的生命周期复核。
+3. ⬜ **漏报**：端口要比对监听地址/暴露范围（`127.0.0.1` → `0.0.0.0` 必须报），
    authorized_keys 要比**指纹集合差**（等量替换也要报）；PID 变化只作上下文。
-4. **发现生命周期**：`firstSeen / lastSeen / lastChecked / resolvedAt`，状态 candidate → verified →
+4. ⬜ **发现生命周期**：`firstSeen / lastSeen / lastChecked / resolvedAt`，状态 candidate → verified →
    fixed/invalid，加“持续 / 恢复 / 复发”事件；复发不能被同 key 去重吞掉。
-5. **日志恢复**：半行尾巴不能直接续写。定一个尾部协议（隔离损坏段/换新段），补单写者锁、
+5. ⬜ **日志恢复**：半行尾巴不能直接续写。定一个尾部协议（隔离损坏段/换新段），补单写者锁、
    事件 ID 唯一性、重建一致性校验。
-6. 顺手修：历史日报按目标日期取当时的基线/观测/发现；无基线时不要报“新端口”却又说“判不出来”；
-   `apply` 要检查提案的 `executable`，回滚失败不能标 `rolled-back`。
+6. 🟡 顺手修：无基线时已不再把当前端口报成“新端口”；历史日报和 `apply` 的 `executable` 检查仍待修。
 
-## 下一步顺序（评审第一阶段）
+## 下一步顺序（以 `docs/DSH改造与后续实施方案.md` 为准）
 
-1. 写一页**现行规格**（建议 `docs/spec.md`）：只读、无模型巡检、执行默认关、第一台 Linux 验收机。
-2. 修上面 5 个 P0，每个都补边界测试（缺命令、无权限、解析失败、持续/恢复/复发、跨日、重启）。
-3. 加 `nightwatch tick`：无对话、无模型、可被 cron/systemd 调用的完整巡检（复用同一管线）。
-4. 加 `watch_timeline`：按资产 key + 时间窗查变化、证据、缺口。
-5. 之后才考虑 osquery / Sigma / 多机；eBPF 和社区同步继续后置。
+1. **M0 剩余**：验证 Watch 专用宿主——最小组合、真实工具清单可枚举、危险工具不在列表里；
+   本轮已完成 M0 的“无模型巡检入口”（`nightwatch tick`）。
+2. **M1**：修上面 3/4/5/6 的 P0（监听范围、指纹集合、生命周期、日志恢复、历史日报、apply 契约），每个补边界测试。
+3. **M2**：持久化巡检任务 + 健康信息（最近成功 / 下次巡检 / 盲区）+ `watch_timeline`。
+4. 之后才考虑 osquery / Sigma / 多机；eBPF 和社区同步继续后置。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
 风险恢复与复发都能解释；删 SQLite 后结果一致；巡检不需要云模型或系统写权限。
@@ -79,8 +79,8 @@
 - `node:sqlite` 的 ExperimentalWarning 是正常的。
 - `watch.db` 可以删，启动时从 `watch.jsonl` 重建；`watch.jsonl` 不能删。
 - 报告标题是 `# 守夜人日报 · YYYY-MM-DD`；测试断言同步。
-- 旧目录 `fairy-watch` 因被 DSH 占用没改名，内容已完整复制到 `nightwatch`；
-  确认后可以删。`fairy-framework\packages\watch\` 是历史副本，未动，不要再去开发。
+- 旧目录 `fairy-watch` 已在 2026-11-09 清理删除，方案文档已移入 `docs/`；
+  `fairy-framework\packages\watch\` 是历史副本，未动，不要再去开发。
 - 别把 `@fairy/guard` 复制进来——那会变成两份维护；用 link。
 
 ## 常用命令
@@ -90,14 +90,17 @@ pnpm install
 npx tsc -b
 pnpm test
 node scripts/nightwatch.mjs smoke
+node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线
+node scripts/nightwatch.mjs tick <home>       # 无模型：跑一轮完整巡检
 node scripts/nightwatch.mjs web
 node scripts/nightwatch.mjs dump
 ```
 
 ## 交接时的状态
 
-- 代码、测试、smoke 都是好的；问题是**产品契约**（日报/采集健康/生命周期/日志恢复），不是编译。
-- 下一步就从 P0-1 开始，别先加功能、别先接 osquery。
+- 代码、测试、smoke 都是好的；M0 的无模型巡检入口已完成，`inspect.ts` 不依赖 DSH。
+- 剩下的是**产品契约**：监听范围/指纹集合、发现生命周期、日志恢复、历史日报、apply 契约，以及 M0 的宿主验证。
+- 下一步先做 M0 宿主验证，再按 M1 修 P0；别先接 osquery。
 
 ---
 

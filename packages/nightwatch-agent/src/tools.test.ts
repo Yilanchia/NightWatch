@@ -4,7 +4,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WatchStore } from './store.js'
-import { proposeFix, takeBaseline, takeDiff, writeReport, type WatchConfig } from './tools.js'
+import { proposeFix } from './tools.js'
+import { takeBaseline, takeDiff, writeReport } from './inspect.js'
+import type { WatchConfig } from './tools.js'
 import type { Finding } from './types.js'
 
 const at = 1_800_000_000_000

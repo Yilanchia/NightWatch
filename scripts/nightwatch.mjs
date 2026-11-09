@@ -7,11 +7,13 @@
 //   node scripts/nightwatch.mjs dump    print the composed plugin tree
 //   node scripts/nightwatch.mjs web     serve the Web UI on Nightwatch's own port (default 3091)
 //   node scripts/nightwatch.mjs smoke   boot once in a throwaway home and check the plugin loads
+//   node scripts/nightwatch.mjs tick    run one full inspection with no session and no model
+//   node scripts/nightwatch.mjs baseline  accept the current state as the reference (owner action)
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseEnv } from 'node:util'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -110,6 +112,58 @@ async function smoke() {
   }
 }
 
+/**
+ * The framework-free core, for the commands that must run with no session and no model.
+ * `inspect.js` / `store.js` never import DSH.
+ */
+async function openCore(home) {
+  const core = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'inspect.js')).href)
+  const { WatchStore } = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'store.js')).href)
+  const store = new WatchStore(join(home, 'watch.jsonl'), join(home, 'watch.db'))
+  return { core, store }
+}
+
+function coreConfig(home) {
+  return {
+    evidencePath: join(home, 'watch.jsonl'),
+    databasePath: join(home, 'watch.db'),
+    reportDir: join(home, 'watch-reports'),
+    ports: process.env.NIGHTWATCH_PORTS !== '0',
+    ssh: process.env.NIGHTWATCH_SSH !== '0',
+    backup: process.env.NIGHTWATCH_BACKUP !== '0',
+    backupPaths: (process.env.NIGHTWATCH_BACKUP_PATHS ?? '').split(';').filter(Boolean),
+    backupStaleHours: Number(process.env.NIGHTWATCH_BACKUP_STALE_HOURS ?? 36),
+    ...(process.env.NIGHTWATCH_SSHD_CONFIG ? { sshdConfig: process.env.NIGHTWATCH_SSHD_CONFIG } : {}),
+    ...(process.env.NIGHTWATCH_AUTHORIZED_KEYS ? { authorizedKeys: process.env.NIGHTWATCH_AUTHORIZED_KEYS } : {}),
+  }
+}
+
+/**
+ * One full inspection, the same pipeline the tools use, but with no DSH session and no model.
+ * This is the piece a cron job or systemd timer can call, and the M0 evidence that the product
+ * does not depend on the agent runtime.
+ */
+async function tick(home) {
+  const { core, store } = await openCore(home)
+  try {
+    const result = core.runInspection({ store, config: coreConfig(home), trigger: 'tick' })
+    console.log(core.formatInspection(result))
+    if (result.health === 'failed') process.exitCode = 1
+  } finally {
+    store.close()
+  }
+}
+
+/** Accept the machine as it is now. A deliberate owner action, never automatic. */
+async function baseline(home) {
+  const { core, store } = await openCore(home)
+  try {
+    console.log(core.takeBaseline({ store, config: coreConfig(home) }))
+  } finally {
+    store.close()
+  }
+}
+
 const command = process.argv[2] ?? 'web'
 try {
   const at = place(process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
@@ -126,6 +180,10 @@ try {
     process.exitCode = await start(at, ['--profile', profile, '--port', port, ...process.argv.slice(3)]).done
   } else if (command === 'smoke') {
     await smoke()
+  } else if (command === 'tick' || command === 'baseline') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await (command === 'tick' ? tick(home) : baseline(home))
   } else {
     throw new Error(`unknown command ${command}`)
   }

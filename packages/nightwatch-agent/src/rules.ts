@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { observationStatus } from './health.js'
 import type { Baseline, Fact, Finding, Observation, Severity } from './types.js'
 
 /**
@@ -50,7 +51,7 @@ function finding(
 
 /** A collector that failed outright is not evidence that anything disappeared. */
 export function collectorFailed(observation: Observation): boolean {
-  return observation.evidence.length > 0 && observation.evidence.every((read) => read.exit !== 0)
+  return observationStatus(observation) === 'failed'
 }
 
 function portFindings(observation: Observation, before: readonly Fact[], at: number): Finding[] {
@@ -147,14 +148,15 @@ export interface DiffOptions {
 
 /**
  * Compare the latest observations with a baseline and apply the rules. Without a baseline the
- * ssh and backup rules still run on what is observed now; only the "new port" rule needs a before.
+ * ssh and backup rules still run on what is observed now; the "new port" rule needs a before,
+ * so it stays silent instead of calling every current port new.
  */
 export function diffSnapshot(baseline: Baseline | undefined, observations: Map<string, Observation>, options: DiffOptions): Finding[] {
   const findings: Finding[] = []
   const before = baseline?.facts ?? []
 
   const ports = observations.get('ports')
-  if (ports && !collectorFailed(ports)) findings.push(...portFindings(ports, before, options.at))
+  if (baseline && ports && !collectorFailed(ports)) findings.push(...portFindings(ports, before, options.at))
 
   const ssh = observations.get('ssh')
   if (ssh && ssh.facts.length > 0) findings.push(...sshFindings(ssh, before, options.at))

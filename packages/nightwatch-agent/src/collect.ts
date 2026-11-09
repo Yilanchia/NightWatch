@@ -10,6 +10,7 @@ import {
   parseSshdConfig,
   parseWindowsListen,
 } from './parse.js'
+import { statusOf } from './health.js'
 import type { Evidence, Fact, Observation } from './types.js'
 
 /**
@@ -68,14 +69,14 @@ function readFileEvidence(command: string, path: string): { text?: string; evide
 
 function collectPorts(platform: NodeJS.Platform, runner: Runner): Read {
   if (platform === 'win32') {
-    const command =
-      'pwsh -NoProfile -Command Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress'
-    const result = runner('pwsh', [
-      '-NoProfile',
-      '-Command',
-      'Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress',
-    ])
-    return { facts: result.exit === 0 ? listenFacts(parseWindowsListen(result.stdout)) : [], evidence: [evidenceOf(command, result)] }
+    // Windows PowerShell ships with Windows; pwsh (7+) is optional and often absent, so the
+    // fallback collector must not depend on it. Get-NetTCPConnection is part of NetTCPIP.
+    const command = 'Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress'
+    const result = runner('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command])
+    return {
+      facts: result.exit === 0 ? listenFacts(parseWindowsListen(result.stdout)) : [],
+      evidence: [evidenceOf(`powershell.exe -NoProfile -NonInteractive -Command ${command}`, result)],
+    }
   }
   // Linux: ss is part of iproute2 and does not need root for the socket list.
   const result = runner('ss', ['-ltnp'])
@@ -179,5 +180,6 @@ export function collectAll(config: CollectorConfig, options: CollectOptions = {}
       collector,
       facts: read.facts,
       evidence: read.evidence,
+      status: statusOf(read.evidence),
     }))
 }

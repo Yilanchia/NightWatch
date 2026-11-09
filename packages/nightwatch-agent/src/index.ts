@@ -6,12 +6,23 @@ import { registerTools, type WatchConfig } from './tools.js'
 
 export { applyProposal } from './apply.js'
 export { collectAll, defaultRunner, type CollectorConfig, type RunResult, type Runner } from './collect.js'
+export { observationStatus, overallStatus, statusLabel, statusOf } from './health.js'
+export {
+  formatInspection,
+  localDay,
+  runInspection,
+  takeBaseline,
+  takeDiff,
+  writeReport,
+  type InspectionOptions,
+  type InspectionResult,
+} from './inspect.js'
 export { listenFacts, parseAuthorizedKeys, parseSshdConfig, parseSsListen, parseWindowsListen } from './parse.js'
 export { buildProposal, formatProposal } from './propose.js'
 export { diffFacts, diffSnapshot, mapByKey } from './rules.js'
 export { renderReport } from './report.js'
 export { WatchStore } from './store.js'
-export { takeBaseline, takeDiff, proposeFix, applyFix, writeReport, type WatchConfig, type WatchContext } from './tools.js'
+export { proposeFix, applyFix, type WatchConfig, type WatchContext } from './tools.js'
 export type {
   Baseline,
   Epistemic,
@@ -22,6 +33,7 @@ export type {
   FixChange,
   FixProposal,
   Observation,
+  ObservationStatus,
   Severity,
   Snapshot,
   WatchEvent,

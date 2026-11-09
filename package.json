@@ -12,6 +12,7 @@
     "typecheck": "tsc -b --noEmit",
     "test": "tsc -b && node --test \"packages/*/dist/*.test.js\"",
     "web": "tsc -b && node scripts/nightwatch.mjs web",
+    "tick": "tsc -b && node scripts/nightwatch.mjs tick",
     "smoke": "tsc -b && node scripts/nightwatch.mjs smoke"
   },
   "devDependencies": {

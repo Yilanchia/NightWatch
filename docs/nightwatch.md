@@ -16,6 +16,17 @@ node scripts/nightwatch.mjs smoke
 node scripts/nightwatch.mjs web
 ```
 
+无模型的巡检入口（不需要 DSH、不需要 API key）：
+
+```powershell
+node scripts/nightwatch.mjs baseline <home>   # 采一次并记为基线
+node scripts/nightwatch.mjs tick <home>       # 采集 → 落盘 → 规则 → 状态复核 → 日报
+```
+
+`tick` 直接调用 `packages/nightwatch-agent/src/inspect.ts`；这个模块不 import DSH，
+所以它既能被 cron/systemd 调用，也能被 agent 工具复用。采集失败时 `tick` 退出码为 1，
+日报里写明检查盲区。
+
 ## 配置
 
 `packages/nightwatch-host/cordis.patch.yml` 是宿主层；`.nightwatch-home/profiles/nightwatch/cordis.patch.yml`
@@ -52,14 +63,15 @@ node scripts/nightwatch.mjs web
 ## 安全边界
 
 1. 命令写死在采集器里，模型只能选采集项，不能拼命令；
-2. 采集失败（没有 `ss`、文件读不到）不会被当成"端口全消失"——但这条目前只在规则层成立，汇总文案仍有缺陷（见评审 P0）；
+2. 采集失败不会被当成"端口全消失"：`Observation` 带 `status`（ok / partial / failed），
+   报告把失败写成“检查盲区”，`takeDiff` 不再把没读到说成“消失”；规则侧的完整复核仍在补；
 3. 执行只开一条窄路：仅三种 SSH 配置改行，文件路径来自配置而不是模型；工具名命中 guard 的 `apply` 规则，判 `destructive`，没人回答就拒绝。备份、逐行校验、失败回滚，**不重启服务**（reload 是人的一步）；以非 root 运行时读不到 `/etc/ssh/sshd_config`，会直接拒绝；
 4. `.env`、令牌、私钥不落库；authorized_keys 只存算法和指纹；
 5. 采集到的文本是数据，不是指令。
 
 ## 已知问题
 
-评审 P0 尚未修：日报不跑规则、失败采集写成消失、监听范围扩大/等量换钥漏报、发现无生命周期、崩溃尾行粘连、历史日报混入当前。完整清单见根目录 [项目评审-2026-11-09.md](../项目评审-2026-11-09.md)。
+评审 P0：日报跑规则和“失败采集写成消失”已完成主要部分；监听范围扩大/等量换钥漏报、发现无生命周期、崩溃尾行粘连、历史日报混入当前仍未修。完整清单见根目录 [项目评审-2026-11-09.md](../项目评审-2026-11-09.md)，改造顺序见 [DSH改造与后续实施方案.md](DSH改造与后续实施方案.md)。
 
 ## 设计材料
 

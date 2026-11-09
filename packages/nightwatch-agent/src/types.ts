@@ -40,6 +40,9 @@ export interface Evidence {
   readonly outputSha256: string
 }
 
+/** How much of a collector's intended read actually happened. */
+export type ObservationStatus = 'ok' | 'partial' | 'failed' | 'disabled'
+
 export interface Observation {
   readonly type: 'observation'
   readonly id: string
@@ -49,6 +52,11 @@ export interface Observation {
   readonly collector: string
   readonly facts: readonly Fact[]
   readonly evidence: readonly Evidence[]
+  /**
+   * Optional for records written before health existed; readers derive it from `evidence`
+   * when absent. A failed read is a blind spot, never evidence that something disappeared.
+   */
+  readonly status?: ObservationStatus
 }
 
 export interface Finding {

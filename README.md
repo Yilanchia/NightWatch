@@ -23,18 +23,18 @@
 
 ## 现状（2026-11-09，评审后）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；以及**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型。
 
-**已知问题（评审 P0，尚未修）**：
+**已知问题**：
 
-1. 日报不跑规则——首次直接要日报会漏掉当前风险；
-2. 采集失败被写成"端口消失"；
+1. ~~日报不跑规则~~：已修。`watch_report` / `nightwatch tick` 都走完整巡检管线，首次直接要日报也会发现当前风险；
+2. 采集健康：`Observation` 已有 `status`，报告会标“盲区”而不是“无变化”；但规则侧的失败判定和生命周期复核还没全部接上；
 3. 监听范围扩大（`127.0.0.1` → `0.0.0.0`）和等量换公钥漏报；
 4. 发现只有去重，没有生命周期（关闭 / 复发）；
 5. 崩溃后的半行日志会和下一条事件粘连，重建时丢失；
 6. 历史日报会混入当前观测。
 
-所以现在它是**可手动调用的原型**，不是"常驻守夜闭环"。完整评审见 [项目评审-2026-11-09.md](项目评审-2026-11-09.md)。
+所以现在它是**可手动调用、也能无模型跑一轮的原型**，还不是“常驻守夜闭环”。完整评审见 [项目评审-2026-11-09.md](项目评审-2026-11-09.md)，改造方案见 [docs/DSH改造与后续实施方案.md](docs/DSH改造与后续实施方案.md)。
 
 ## 跑起来
 
@@ -44,6 +44,10 @@ npx tsc -b
 
 # 一次性验证：临时 home 里真实起一次
 node scripts/nightwatch.mjs smoke
+
+# 无模型巡检（不需要 DSH、不需要 API key）
+node scripts/nightwatch.mjs baseline nightwatch-home
+node scripts/nightwatch.mjs tick nightwatch-home
 
 # 常驻：自己的 home、自己的端口
 node scripts/nightwatch.mjs web
@@ -77,15 +81,27 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `watch_propose_fix` | 对一条发现产出修复计划（改哪行、风险、回滚、验证） |
 | `watch_apply_fix` | 应用计划（仅三种 SSH 改行；guard 判 destructive；备份/校验/回滚；不 reload） |
 
+## 命令行（无模型）
+
+`tick` 直接调用 `packages/nightwatch-agent/src/inspect.ts`，不 import DSH、不建会话、不请求模型。
+
+| 命令 | 做什么 |
+|---|---|
+| `node scripts/nightwatch.mjs baseline <home>` | 采一次并记为基线——明确的主人的动作，不会自动重设 |
+| `node scripts/nightwatch.mjs tick <home>` | 跑一轮完整巡检，写当天的日报；采集失败时退出码非 0 |
+| `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
+
 ## 代码结构
 
 ```
 nightwatch
 ├─ packages/nightwatch-agent   @nightwatch/agent   采集、存储、规则、报告、提案/执行
+│  └─ src/inspect.ts          巡检管线（不 import DSH；tick 直接调用）
+│  └─ src/health.ts           采集健康：ok / partial / failed
 ├─ packages/nightwatch-host    @nightwatch/host    宿主 bundle：guard + agent
-├─ scripts/nightwatch.mjs     启动器：自己的 home / profile / 端口
+├─ scripts/nightwatch.mjs     启动器：自己的 home / profile / 端口；含 tick / baseline
 ├─ docs/nightwatch.md         配置、数据与安全边界
-└─ ...                        构思稿、调研、评审（历史材料）
+└─ ...                        构思稿、调研、评审、DSH 方案（历史与设计材料）
 ```
 
 ## 路线图（按评审第一阶段）

@@ -1,8 +1,14 @@
+import { observationStatus, statusLabel } from './health.js'
 import type { Baseline, Fact, Finding, Observation } from './types.js'
 
 /**
  * The daily page. Plain Markdown, no template engine: it lands in the owner's workspace and in
  * the report folder, and it must read well without a model touching it.
+ *
+ * Three rules shape this page:
+ * - "nothing changed" is only allowed when every collector actually read;
+ * - risks that are still open stay listed on later days;
+ * - a check that did not run is a blind spot, not a clean bill of health.
  */
 
 export interface ReportInput {
@@ -11,7 +17,14 @@ export interface ReportInput {
   readonly host: string
   readonly baseline?: Baseline
   readonly observations: Map<string, Observation>
+  /** Findings created today. */
   readonly findings: Finding[]
+  /** Findings that are still open (candidate or verified). */
+  readonly openFindings?: readonly Finding[]
+  /** Collectors that did not read fully, e.g. "ports（读取失败）". */
+  readonly blindSpots?: readonly string[]
+  /** Things the report must say it could not judge, e.g. no baseline for ports. */
+  readonly notes?: readonly string[]
 }
 
 function localTime(at: number): string {
@@ -22,45 +35,65 @@ function severityRank(severity: Finding['severity']): number {
   return severity === 'high' ? 0 : severity === 'medium' ? 1 : 2
 }
 
-function lineFor(finding: Finding): string {
-  return `- **[${finding.severity}] ${finding.title}**（${finding.epistemic === 'observed' ? '读到' : '推断'}，证据 ${finding.observationId}）\n  ${finding.detail}`
+function sorted(findings: readonly Finding[]): Finding[] {
+  return [...findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity))
+}
+
+function lineFor(finding: Finding, fresh: boolean): string {
+  const tag = fresh ? '（今日新增）' : ''
+  return `- **[${finding.severity}] ${finding.title}**${tag}（${finding.epistemic === 'observed' ? '读到' : '推断'}，证据 ${finding.observationId}）\n  ${finding.detail}`
 }
 
 export function renderReport(input: ReportInput): string {
-  const findings = [...input.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity))
-  const high = findings.filter((finding) => finding.severity === 'high').length
-  const medium = findings.filter((finding) => finding.severity === 'medium').length
+  const fresh = sorted(input.findings)
+  const open = sorted(input.openFindings ?? [])
+  const blindSpots = input.blindSpots ?? []
+  const notes = input.notes ?? []
+  const freshIds = new Set(fresh.map((finding) => finding.id))
+  const high = open.filter((finding) => finding.severity === 'high').length
+  const medium = open.filter((finding) => finding.severity === 'medium').length
 
   const lines: string[] = []
   lines.push(`# 守夜人日报 · ${input.day}`)
   lines.push('')
   lines.push(`机器：${input.host} · 生成于 ${localTime(input.at)}`)
   lines.push('')
+
   lines.push('## 一句话')
   lines.push('')
-  if (findings.length === 0) {
+  const sentence: string[] = []
+  if (fresh.length > 0) sentence.push(`今日新增 ${fresh.length} 条要看的`)
+  if (open.length > 0) sentence.push(`未关闭 ${open.length} 条（高危 ${high} 条，中危 ${medium} 条）`)
+  if (blindSpots.length > 0) sentence.push(`有 ${blindSpots.length} 项没读全：${blindSpots.join('、')}`)
+  for (const note of notes) sentence.push(note)
+  if (sentence.length === 0) {
     lines.push('今天没有值得单独说的变化。')
   } else {
-    lines.push(`今天有 ${findings.length} 条要看的：高危 ${high} 条，中危 ${medium} 条。`)
+    lines.push(`${sentence.join('；')}。`)
   }
   lines.push('')
 
-  lines.push('## 发现')
+  lines.push('## 未关闭的风险')
   lines.push('')
-  if (findings.length === 0) {
+  if (open.length === 0) {
     lines.push('（无）')
   } else {
-    for (const finding of findings) lines.push(lineFor(finding))
+    for (const finding of open) lines.push(lineFor(finding, freshIds.has(finding.id)))
   }
   lines.push('')
 
-  lines.push('## 采集面')
+  lines.push('## 采集健康')
   lines.push('')
-  lines.push('| 采集项 | 事实数 | 最后采集 | 命令 |')
-  lines.push('|---|---|---|---|')
+  lines.push('| 采集项 | 状态 | 事实数 | 最后采集 | 命令 |')
+  lines.push('|---|---|---|---|---|')
   for (const [collector, observation] of [...input.observations.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const command = observation.evidence.map((read) => read.command).join('；')
-    lines.push(`| ${collector} | ${observation.facts.length} | ${localTime(observation.at)} | ${command} |`)
+    const status = observationStatus(observation)
+    const command = observation.evidence.map((read) => read.command).join('；').replace(/\|/g, '\\|')
+    lines.push(`| ${collector} | ${statusLabel(status)} | ${observation.facts.length} | ${localTime(observation.at)} | ${command} |`)
+  }
+  if (blindSpots.length > 0) {
+    lines.push('')
+    lines.push(`**检查盲区**：${blindSpots.join('、')} 没有读全。这些部分今天判不出来，不能当成"没有变化"。`)
   }
   lines.push('')
 
@@ -69,7 +102,7 @@ export function renderReport(input: ReportInput): string {
   if (input.baseline) {
     lines.push(`最近一次基线：${localTime(input.baseline.at)}，${input.baseline.facts.length} 条事实。`)
   } else {
-    lines.push('还没有基线。先跑一次 `watch_baseline`，之后的变化才有"和什么比"可言。')
+    lines.push('还没有基线。先跑一次 `watch_baseline`；没有基线时端口变化不判定，避免把"不知道"说成"没变化"。')
   }
   lines.push('')
 
