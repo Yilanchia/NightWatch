@@ -16,6 +16,10 @@ import type { WatchConfig, WatchContext } from './tools.js'
  * model, no network: if this cannot run, the product does not exist.
  */
 
+/** Ids only need to be unique within this process; the log keeps every update as its own event. */
+let updateSeq = 0
+let eventSeq = 0
+
 export function localDay(at: number): string {
   const date = new Date(at)
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -55,6 +59,8 @@ export interface InspectionResult {
   readonly notes: readonly string[]
   readonly newFindings: readonly Finding[]
   readonly openFindings: readonly Finding[]
+  /** Findings confirmed gone in this run (only after a successful read). */
+  readonly resolved: readonly Finding[]
   readonly reportPath: string
   readonly reportDay: string
 }
@@ -79,6 +85,40 @@ function at(ctx: WatchContext): number {
   return ctx.now ? ctx.now() : Date.now()
 }
 
+/** Which collector can prove a finding still exists, or that it is gone. */
+function collectorOf(kind: string): string | undefined {
+  if (kind === 'new_listen_port' || kind === 'listen_scope_expanded') return 'ports'
+  if (kind.startsWith('ssh_')) return 'ssh'
+  if (kind.startsWith('backup_')) return 'backup'
+  return undefined
+}
+
+function readOk(observations: readonly Observation[], kind: string): boolean {
+  const collector = collectorOf(kind)
+  if (!collector) return false
+  const observation = observations.find((candidate) => candidate.collector === collector)
+  return observation !== undefined && observationStatus(observation) === 'ok'
+}
+
+/** Still true: the rule restated it, or the same fact is still in the latest read and still bad. */
+function stillPresent(finding: Finding, currentKeys: ReadonlySet<string>, latest: Map<string, Observation>): boolean {
+  if (currentKeys.has(finding.key)) return true
+  const collector = collectorOf(finding.kind)
+  const observation = collector ? latest.get(collector) : undefined
+  if (!observation) return false
+  const fact = observation.facts.find((candidate) => candidate.key === finding.key)
+  if (!fact) return false
+  switch (finding.kind) {
+    case 'ssh_password_authentication':
+    case 'ssh_empty_password':
+      return fact.value.toLowerCase() === 'yes'
+    case 'ssh_root_login':
+      return /^yes$/i.test(fact.value.trim())
+    default:
+      return true
+  }
+}
+
 function collectInto(ctx: WatchContext, now: number, options: InspectionOptions = {}): Observation[] {
   const observations = collectAll(collectorConfig(ctx.config), {
     ...((options.platform ?? ctx.platform) ? { platform: options.platform ?? ctx.platform } : {}),
@@ -97,9 +137,51 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
   const latest = ctx.store.latestObservations()
   const baseline = ctx.store.latestBaseline()
   const findings = diffSnapshot(baseline, latest, { at: now, backupStaleHours: ctx.config.backupStaleHours })
-  const openKeys = ctx.store.openFindingKeys()
-  const fresh = findings.filter((finding) => !openKeys.has(finding.key))
-  for (const finding of fresh) ctx.store.append(finding)
+  const openBefore = ctx.store.openFindings()
+  const currentKeys = new Set(findings.map((finding) => finding.key))
+  const fresh: Finding[] = []
+
+  // New or recurring: a key that is not open right now becomes a finding of its own.
+  for (const finding of findings) {
+    if (openBefore.some((open) => open.key === finding.key)) continue
+    const previous = ctx.store.findings("key = ? AND status IN ('fixed', 'invalid')", finding.key)[0]
+    const recorded: Finding = {
+      ...finding,
+      firstSeen: now,
+      lastSeen: now,
+      lastChecked: now,
+      ...(previous ? { recurrenceOf: previous.id } : {}),
+    }
+    ctx.store.append(recorded)
+    fresh.push(recorded)
+  }
+
+  // Sustained or resolved: only a successful read of that collector may update or close a finding.
+  const resolved: Finding[] = []
+  for (const open of openBefore) {
+    if (!readOk(observations, open.kind)) continue
+    if (currentKeys.has(open.key) || stillPresent(open, currentKeys, latest)) {
+      ctx.store.append({
+        type: 'finding-update',
+        id: `fupd-${now.toString(36)}-${updateSeq++}`,
+        at: now,
+        findingId: open.id,
+        lastSeen: now,
+        lastChecked: now,
+      })
+    } else {
+      ctx.store.append({
+        type: 'finding-update',
+        id: `fupd-${now.toString(36)}-${updateSeq++}`,
+        at: now,
+        findingId: open.id,
+        status: 'fixed',
+        lastChecked: now,
+        resolvedAt: now,
+      })
+      resolved.push({ ...open, status: 'fixed', lastChecked: now, resolvedAt: now })
+    }
+  }
 
   const host = observations[0]?.host ?? hostname()
   const health = overallStatus(observations)
@@ -116,6 +198,7 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
     observations: latest,
     findings: fresh,
     openFindings,
+    ...(resolved.length > 0 ? { resolved } : {}),
     blindSpots,
     notes,
   })
@@ -123,7 +206,7 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
   mkdirSync(ctx.config.reportDir, { recursive: true })
   const reportPath = join(ctx.config.reportDir, `${day}.md`)
   writeFileSync(reportPath, text, 'utf8')
-  ctx.store.append({ type: 'report', id: `report-${now.toString(36)}`, at: now, path: reportPath })
+  ctx.store.append({ type: 'report', id: `report-${now.toString(36)}-${eventSeq++}`, at: now, path: reportPath })
 
   return {
     runId: `run-${now.toString(36)}`,
@@ -136,6 +219,7 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
     notes,
     newFindings: fresh,
     openFindings,
+    resolved,
     reportPath,
     reportDay: day,
   }
@@ -148,6 +232,7 @@ export function formatInspection(result: InspectionResult): string {
     `今日新增 ${result.newFindings.length} 条`,
     `未关闭 ${result.openFindings.length} 条`,
   ]
+  if (result.resolved.length > 0) parts.push(`已恢复 ${result.resolved.length} 条`)
   if (result.blindSpots.length > 0) parts.push(`盲区 ${result.blindSpots.join('、')}`)
   if (result.notes.length > 0) parts.push(result.notes.join('；'))
   parts.push(`日报 ${result.reportPath}`)
@@ -171,7 +256,7 @@ export function takeBaseline(ctx: WatchContext): string {
   const facts = observations.flatMap((observation) => observation.facts)
   const baseline: Baseline = {
     type: 'baseline',
-    id: `base-${now.toString(36)}`,
+    id: `base-${now.toString(36)}-${eventSeq++}`,
     at: now,
     host: observations[0]?.host ?? hostname(),
     facts,
@@ -241,10 +326,10 @@ export function writeReport(ctx: WatchContext, day?: string): string {
     return `日报已写到 ${result.reportPath}（今日新增 ${result.newFindings.length} 条，未关闭 ${result.openFindings.length} 条，采集${statusLabel(result.health)}）。`
   }
 
-  const { start, end } = dayBounds(target)
-  const findings = ctx.store.findings('at >= ? AND at < ?', start, end)
-  const latest = ctx.store.latestObservations()
-  const baseline = ctx.store.latestBaseline()
+  const { end } = dayBounds(target)
+  const findings = ctx.store.findings('at < ? AND (resolved_at IS NULL OR resolved_at >= ?)', end, end)
+  const latest = ctx.store.observationsBefore(end)
+  const baseline = ctx.store.baselineBefore(end)
   const host = latest.values().next().value?.host ?? hostname()
   const text = renderReport({
     day: target,
@@ -259,7 +344,7 @@ export function writeReport(ctx: WatchContext, day?: string): string {
   mkdirSync(ctx.config.reportDir, { recursive: true })
   const path = join(ctx.config.reportDir, `${target}.md`)
   writeFileSync(path, text, 'utf8')
-  ctx.store.append({ type: 'report', id: `report-${now.toString(36)}`, at: now, path })
+  ctx.store.append({ type: 'report', id: `report-${now.toString(36)}-${eventSeq++}`, at: now, path })
 
   const high = findings.filter((finding) => finding.severity === 'high').length
   return `日报已写到 ${path}（${findings.length} 条发现，其中高危 ${high} 条）。`

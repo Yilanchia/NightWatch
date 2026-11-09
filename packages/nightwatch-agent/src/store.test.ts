@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WatchStore } from './store.js'
@@ -69,7 +69,7 @@ test('deleting the view rebuilds it from the log alone', () => {
   cleanup()
 })
 
-test('a torn last line is skipped instead of failing the open', () => {
+test('a torn last line is moved aside and the next event survives a reopen', () => {
   const { jsonl, db, cleanup } = fixture()
   const store = new WatchStore(jsonl, db)
   store.append(observation())
@@ -79,6 +79,50 @@ test('a torn last line is skipped instead of failing the open', () => {
 
   const reopened = new WatchStore(jsonl, db)
   assert.equal(reopened.latestObservations().size, 1)
+  assert.ok(reopened.recovery)
+  assert.ok(existsSync(reopened.recovery.tornPath))
+  reopened.append({ ...observation(), id: 'obs-2' })
   reopened.close()
+
+  const third = new WatchStore(jsonl, db)
+  assert.equal(third.events().filter((event) => event.type === 'observation').length, 2)
+  assert.equal(third.recovery, undefined)
+  third.close()
+  cleanup()
+})
+
+test('corruption in the middle of the log is an error, not a skipped line', () => {
+  const { jsonl, db, cleanup } = fixture()
+  const store = new WatchStore(jsonl, db)
+  store.append(observation())
+  store.close()
+  appendFileSync(jsonl, 'this is not json\n', 'utf8')
+  appendFileSync(jsonl, `${JSON.stringify({ ...observation(), id: 'obs-2' })}\n`, 'utf8')
+
+  assert.throws(() => new WatchStore(jsonl, db), /第 2 行损坏/)
+  cleanup()
+})
+
+test('a second writer is refused while the first is open', () => {
+  const { jsonl, db, cleanup } = fixture()
+  const first = new WatchStore(jsonl, db)
+  try {
+    assert.throws(() => new WatchStore(jsonl, db), /正在写/)
+  } finally {
+    first.close()
+  }
+  const after = new WatchStore(jsonl, db)
+  after.close()
+  cleanup()
+})
+
+test('a duplicate event id is refused instead of silently overwritten', () => {
+  const { jsonl, db, cleanup } = fixture()
+  const store = new WatchStore(jsonl, db)
+  store.append(observation())
+  store.close()
+  appendFileSync(jsonl, `${JSON.stringify(observation())}\n`, 'utf8')
+
+  assert.throws(() => new WatchStore(jsonl, db), /重复的事件 ID/)
   cleanup()
 })

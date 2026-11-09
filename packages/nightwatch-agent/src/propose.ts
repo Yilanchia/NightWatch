@@ -65,6 +65,7 @@ export function buildProposal(finding: Finding, at: number): FixProposal {
         verify: 'sudo sshd -t && sudo systemctl reload sshd && sudo sshd -T | grep -i permitemptypasswords',
         ...notExecutable('空密码必须关，但改配置仍要 root 和主人在场。这一版只提案。'),
       }
+    case 'ssh_authorized_key_added':
     case 'ssh_authorized_keys_changed':
       return {
         ...base,

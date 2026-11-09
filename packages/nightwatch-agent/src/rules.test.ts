@@ -61,18 +61,54 @@ test('weak ssh settings are high even without a baseline', () => {
   assert.equal(findings.every((finding) => finding.epistemic === 'observed'), true)
 })
 
-test('more authorized keys than the baseline is a change worth a look', () => {
+test('the same port on a wider address is a finding', () => {
   const findings = diffSnapshot(
-    baseline([{ kind: 'ssh_authorized_key_count', key: 'ssh:authorized_keys:count', value: '1' }]),
+    baseline([{ kind: 'listen_port', key: 'tcp:3306', value: '127.0.0.1:3306', detail: '127.0.0.1:3306' }]),
+    new Map([['ports', observation('ports', [{ kind: 'listen_port', key: 'tcp:3306', value: '0.0.0.0:3306', detail: '0.0.0.0:3306' }])]]),
+    { at, backupStaleHours: 36 },
+  )
+
+  assert.equal(findings.length, 1)
+  assert.equal(findings[0]!.kind, 'listen_scope_expanded')
+  assert.equal(findings[0]!.key, 'tcp:3306')
+  assert.equal(findings[0]!.severity, 'high')
+})
+
+test('a changed pid on the same address is not a finding', () => {
+  const findings = diffSnapshot(
+    baseline([{ kind: 'listen_port', key: 'tcp:22', value: '0.0.0.0:22 (sshd, pid 1)', detail: '0.0.0.0:22' }]),
+    new Map([['ports', observation('ports', [{ kind: 'listen_port', key: 'tcp:22', value: '0.0.0.0:22 (sshd, pid 99)', detail: '0.0.0.0:22' }])]]),
+    { at, backupStaleHours: 36 },
+  )
+  assert.deepEqual(findings, [])
+})
+
+test('swapping one authorized key for another is a new key', () => {
+  const before = factsOf('ssh:authorized_key:aaaaaaaaaaaa')
+  before[0] = { kind: 'ssh_authorized_key', key: 'ssh:authorized_key:aaaaaaaaaaaa', value: 'ssh-ed25519' }
+  const findings = diffSnapshot(
+    baseline(before),
     new Map([['ssh', observation('ssh', [
       { kind: 'ssh_option', key: 'ssh:passwordauthentication', value: 'no' },
-      { kind: 'ssh_authorized_key_count', key: 'ssh:authorized_keys:count', value: '2' },
+      { kind: 'ssh_authorized_key', key: 'ssh:authorized_key:bbbbbbbbbbbb', value: 'ssh-rsa' },
     ])]]),
     { at, backupStaleHours: 36 },
   )
+
   assert.equal(findings.length, 1)
-  assert.equal(findings[0]!.kind, 'ssh_authorized_keys_changed')
+  assert.equal(findings[0]!.kind, 'ssh_authorized_key_added')
+  assert.equal(findings[0]!.key, 'ssh:authorized_key:bbbbbbbbbbbb')
   assert.equal(findings[0]!.severity, 'medium')
+})
+
+test('an unchanged key set produces no key finding', () => {
+  const key: Fact = { kind: 'ssh_authorized_key', key: 'ssh:authorized_key:aaaaaaaaaaaa', value: 'ssh-ed25519' }
+  const findings = diffSnapshot(
+    baseline([key]),
+    new Map([['ssh', observation('ssh', [key])]]),
+    { at, backupStaleHours: 36 },
+  )
+  assert.deepEqual(findings, [])
 })
 
 test('a stale or missing backup is high', () => {

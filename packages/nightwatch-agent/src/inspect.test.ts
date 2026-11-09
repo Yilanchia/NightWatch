@@ -4,10 +4,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Runner } from './collect.js'
-import { runInspection } from './inspect.js'
+import { runInspection, writeReport } from './inspect.js'
 import { WatchStore } from './store.js'
 import type { WatchConfig } from './tools.js'
-import type { Baseline } from './types.js'
+import type { Baseline, Observation } from './types.js'
 
 const at = 1_800_000_000_000
 
@@ -159,6 +159,46 @@ test('an unreadable sshd_config is partial, not a pass', () => {
     assert.deepEqual(result.blindSpots, ['ssh（部分未读全）'])
   } finally {
     cleanup()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a report for a past day uses that day observations, not today reading', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-history-'))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'),
+    databasePath: join(dir, 'watch.db'),
+    reportDir: join(dir, 'reports'),
+    ports: true,
+    ssh: false,
+    backup: false,
+    backupPaths: [],
+    backupStaleHours: 36,
+  }
+  const dayOne = new Date(2026, 10, 7, 12).getTime()
+  const dayTwo = new Date(2026, 10, 8, 12).getTime()
+  const observation = (at: number, id: string, key: string): Observation => ({
+    type: 'observation',
+    id,
+    at,
+    host: 'host',
+    collector: 'ports',
+    facts: [{ kind: 'listen_port', key, value: `${key.split(':')[1]}:22` }],
+    evidence: [{ command: 'ss -ltnp', exit: 0, outputSha256: 'x' }],
+  })
+  store.append(observation(dayOne, 'obs-one', 'tcp:22'))
+  store.append(observation(dayTwo, 'obs-two', 'tcp:3306'))
+  const context = { store, config, platform: 'linux' as const, now: () => dayTwo, runner: ssFailed }
+  try {
+    const message = writeReport(context, '2026-11-07')
+    const path = message.match(/日报已写到 (.+?)（/)?.[1]
+    assert.ok(path)
+    const text = readFileSync(path, 'utf8')
+    assert.match(text, /2026-11-07/)
+    assert.doesNotMatch(text, /3306/)
+  } finally {
+    store.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })

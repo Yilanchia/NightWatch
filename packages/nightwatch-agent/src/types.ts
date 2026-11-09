@@ -74,6 +74,28 @@ export interface Finding {
   /** The observation it rests on. */
   readonly observationId: string
   readonly status: FindingStatus
+  /** When it was first seen. Optional for records written before the lifecycle existed. */
+  readonly firstSeen?: number
+  /** Last time the same condition was still true (a successful check). */
+  readonly lastSeen?: number
+  /** Last time a check tried to confirm it, successfully or not. */
+  readonly lastChecked?: number
+  /** When it stopped being true, only after a successful read. */
+  readonly resolvedAt?: number
+  /** If it came back after being closed, the id of the earlier finding. */
+  readonly recurrenceOf?: string
+}
+
+/** A lifecycle event for a finding. Kept separate so event ids stay unique and the log append-only. */
+export interface FindingUpdate {
+  readonly type: 'finding-update'
+  readonly id: string
+  readonly at: number
+  readonly findingId: string
+  readonly status?: FindingStatus
+  readonly lastSeen?: number
+  readonly lastChecked?: number
+  readonly resolvedAt?: number
 }
 
 /** A baseline is a set of observations the owner agreed to treat as "the way it was". */
@@ -125,7 +147,7 @@ export interface FixProposal {
   readonly reason?: string
 }
 
-export type WatchEvent = Observation | Finding | Baseline | ReportEvent | FixProposal | FixAction
+export type WatchEvent = Observation | Finding | FindingUpdate | Baseline | ReportEvent | FixProposal | FixAction
 
 /** What actually happened when a proposal was applied. Kept even when it failed. */
 export interface FixAction {

@@ -146,6 +146,9 @@ function coreConfig(home) {
 async function tick(home) {
   const { core, store } = await openCore(home)
   try {
+    if (store.recovery) {
+      console.warn(`nightwatch: 日志尾部有半行，已隔离到 ${store.recovery.tornPath}（${store.recovery.tornBytes} 字节），本次从最后一条完整事件继续`)
+    }
     const result = core.runInspection({ store, config: coreConfig(home), trigger: 'tick' })
     console.log(core.formatInspection(result))
     if (result.health === 'failed') process.exitCode = 1

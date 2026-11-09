@@ -1,5 +1,15 @@
 import { DatabaseSync } from 'node:sqlite'
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
 import { dirname } from 'node:path'
 import type { Baseline, Fact, Finding, FixChange, FixProposal, Observation, WatchEvent } from './types.js'
 
@@ -11,8 +21,21 @@ import type { Baseline, Fact, Finding, FixChange, FixProposal, Observation, Watc
  * is the same rule as her life log: the log is the truth, the index is a view.
  */
 
+/** What a torn-tail repair moved aside, so the report can say the log was repaired. */
+export interface Recovery {
+  readonly tornPath: string
+  readonly tornBytes: number
+  readonly at: number
+}
+
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS observations (
+DROP TABLE IF EXISTS observations;
+DROP TABLE IF EXISTS findings;
+DROP TABLE IF EXISTS baselines;
+DROP TABLE IF EXISTS reports;
+DROP TABLE IF EXISTS proposals;
+DROP TABLE IF EXISTS actions;
+CREATE TABLE observations (
   id TEXT PRIMARY KEY,
   at INTEGER NOT NULL,
   host TEXT NOT NULL,
@@ -20,7 +43,7 @@ CREATE TABLE IF NOT EXISTS observations (
   facts TEXT NOT NULL,
   evidence TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS findings (
+CREATE TABLE findings (
   id TEXT PRIMARY KEY,
   at INTEGER NOT NULL,
   kind TEXT NOT NULL,
@@ -30,7 +53,12 @@ CREATE TABLE IF NOT EXISTS findings (
   detail TEXT NOT NULL,
   epistemic TEXT NOT NULL,
   observation_id TEXT NOT NULL,
-  status TEXT NOT NULL
+  status TEXT NOT NULL,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  last_checked INTEGER,
+  resolved_at INTEGER,
+  recurrence_of TEXT
 );
 CREATE TABLE IF NOT EXISTS baselines (
   id TEXT PRIMARY KEY,
@@ -77,7 +105,12 @@ CREATE INDEX IF NOT EXISTS observations_by_collector ON observations (collector,
 `
 
 export class WatchStore {
-  private readonly db: DatabaseSync
+  private db!: DatabaseSync
+  private readonly lockPath: string
+  private lockFd: number | undefined
+  private readonly ids = new Set<string>()
+  /** Set when opening found a half-written tail; kept so callers can say so instead of hiding it. */
+  readonly recovery: Recovery | undefined
 
   constructor(
     private readonly jsonlPath: string,
@@ -85,28 +118,112 @@ export class WatchStore {
   ) {
     mkdirSync(dirname(jsonlPath), { recursive: true })
     mkdirSync(dirname(dbPath), { recursive: true })
-    this.db = new DatabaseSync(dbPath)
-    this.db.exec('PRAGMA journal_mode = WAL')
-    this.db.exec(SCHEMA)
-    this.rebuild()
+    this.lockPath = `${jsonlPath}.lock`
+    this.acquireLock()
+    let db: DatabaseSync | undefined
+    try {
+      this.recovery = this.recoverTail()
+      db = new DatabaseSync(dbPath)
+      this.db = db
+      this.db.exec('PRAGMA journal_mode = WAL')
+      this.db.exec(SCHEMA)
+      this.rebuild()
+    } catch (error) {
+      db?.close()
+      this.releaseLock()
+      throw error
+    }
   }
 
-  /** Reads the log. A torn last line (a crash mid-write) is skipped, not fatal. */
+  /**
+   * One writer per evidence log. A second process would interleave appends and corrupt the tail
+   * protocol, so it is refused rather than trusted to be careful.
+   */
+  private acquireLock(): void {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        this.lockFd = openSync(this.lockPath, 'wx')
+        writeSync(this.lockFd, String(process.pid))
+        return
+      } catch (error) {
+        if (!existsSync(this.lockPath)) throw error
+        const owner = Number.parseInt(readFileSync(this.lockPath, 'utf8').trim(), 10)
+        if (Number.isInteger(owner) && this.isAlive(owner)) {
+          throw new Error(`另一个 Nightwatch 进程（pid ${owner}）正在写 ${this.jsonlPath}；先停掉它。`)
+        }
+        unlinkSync(this.lockPath)
+      }
+    }
+    throw new Error(`无法取得 ${this.lockPath} 的写锁。`)
+  }
+
+  private isAlive(pid: number): boolean {
+    if (pid === process.pid) return true
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM'
+    }
+  }
+
+  private releaseLock(): void {
+    if (this.lockFd !== undefined) {
+      closeSync(this.lockFd)
+      this.lockFd = undefined
+    }
+    if (existsSync(this.lockPath)) unlinkSync(this.lockPath)
+  }
+
+  /**
+   * A crash can leave half a line at the end. It is moved aside (visible, not deleted) and the
+   * log ends on the last complete line, so the next append cannot glue itself to the fragment.
+   * A complete JSON line without its trailing newline is kept, not quarantined.
+   */
+  private recoverTail(): Recovery | undefined {
+    if (!existsSync(this.jsonlPath)) return undefined
+    const bytes = readFileSync(this.jsonlPath)
+    if (bytes.length === 0 || bytes[bytes.length - 1] === 0x0a) return undefined
+    const lastNewline = bytes.lastIndexOf(0x0a)
+    const torn = bytes.subarray(lastNewline + 1)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(torn.toString('utf8'))
+    } catch {
+      parsed = undefined
+    }
+    if (parsed && typeof parsed === 'object' && typeof (parsed as { type?: unknown }).type === 'string') {
+      // The event is complete; only the newline was lost. Keep it.
+      appendFileSync(this.jsonlPath, '\n', 'utf8')
+      return undefined
+    }
+    const good = lastNewline === -1 ? Buffer.alloc(0) : bytes.subarray(0, lastNewline + 1)
+    const tornPath = `${this.jsonlPath}.torn-${Date.now().toString(36)}-${process.pid}`
+    writeFileSync(tornPath, torn)
+    writeFileSync(this.jsonlPath, good)
+    return { tornPath, tornBytes: torn.length, at: Date.now() }
+  }
+
+  /** Reads the log. Corruption that is not a torn tail is an error, not something to skip. */
   events(): WatchEvent[] {
     if (!existsSync(this.jsonlPath)) return []
+    const lines = readFileSync(this.jsonlPath, 'utf8').split('\n')
     const events: WatchEvent[] = []
-    for (const line of readFileSync(this.jsonlPath, 'utf8').split('\n')) {
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]!
       if (!line.trim()) continue
       try {
         events.push(JSON.parse(line) as WatchEvent)
       } catch {
-        // Torn tail: the event never finished being written, so it never happened.
+        throw new Error(`watch.jsonl 第 ${index + 1} 行损坏（不是尾部半行）；拒绝猜测或静默跳过。`)
       }
     }
     return events
   }
 
   append(event: WatchEvent): void {
+    if (this.ids.has(event.id)) throw new Error(`事件 ID 重复：${event.id}（${event.type}）；日志已损坏，拒绝覆盖。`)
+    this.ids.add(event.id)
     appendFileSync(this.jsonlPath, `${JSON.stringify(event)}\n`, 'utf8')
     this.insert(event)
   }
@@ -116,7 +233,14 @@ export class WatchStore {
     this.db.exec(
       'DELETE FROM observations; DELETE FROM findings; DELETE FROM baselines; DELETE FROM reports; DELETE FROM proposals; DELETE FROM actions;',
     )
-    for (const event of this.events()) this.insert(event)
+    this.ids.clear()
+    for (const event of this.events()) {
+      if (this.ids.has(event.id)) {
+        throw new Error(`watch.jsonl 有重复的事件 ID ${event.id}（${event.type}）；日志已损坏，拒绝静默去重。`)
+      }
+      this.ids.add(event.id)
+      this.insert(event)
+    }
   }
 
   private insert(event: WatchEvent): void {
@@ -129,7 +253,7 @@ export class WatchStore {
       case 'finding':
         this.db
           .prepare(
-            'INSERT OR REPLACE INTO findings (id, at, kind, severity, key, title, detail, epistemic, observation_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT OR REPLACE INTO findings (id, at, kind, severity, key, title, detail, epistemic, observation_id, status, first_seen, last_seen, last_checked, resolved_at, recurrence_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           )
           .run(
             event.id,
@@ -142,7 +266,19 @@ export class WatchStore {
             event.epistemic,
             event.observationId,
             event.status,
+            event.firstSeen ?? event.at,
+            event.lastSeen ?? event.at,
+            event.lastChecked ?? null,
+            event.resolvedAt ?? null,
+            event.recurrenceOf ?? null,
           )
+        return
+      case 'finding-update':
+        this.db
+          .prepare(
+            'UPDATE findings SET status = COALESCE(?, status), last_seen = COALESCE(?, last_seen), last_checked = COALESCE(?, last_checked), resolved_at = COALESCE(?, resolved_at) WHERE id = ?',
+          )
+          .run(event.status ?? null, event.lastSeen ?? null, event.lastChecked ?? null, event.resolvedAt ?? null, event.findingId)
         return
       case 'baseline':
         this.db
@@ -194,9 +330,14 @@ export class WatchStore {
 
   /** The most recent baseline, if the owner ever took one. */
   latestBaseline(): Baseline | undefined {
-    const row = this.db.prepare('SELECT id, at, host, facts, observation_ids FROM baselines ORDER BY at DESC LIMIT 1').get() as
-      | { id: string; at: number; host: string; facts: string; observation_ids: string }
-      | undefined
+    return this.baselineBefore(Number.POSITIVE_INFINITY)
+  }
+
+  /** The baseline that was in force just before `at`, for a historical report. */
+  baselineBefore(at: number): Baseline | undefined {
+    const row = this.db
+      .prepare('SELECT id, at, host, facts, observation_ids FROM baselines WHERE at < ? ORDER BY at DESC LIMIT 1')
+      .get(at) as { id: string; at: number; host: string; facts: string; observation_ids: string } | undefined
     if (!row) return undefined
     return {
       type: 'baseline',
@@ -210,13 +351,18 @@ export class WatchStore {
 
   /** The latest observation per collector, so a diff compares like with like. */
   latestObservations(): Map<string, Observation> {
+    return this.observationsBefore(Number.POSITIVE_INFINITY)
+  }
+
+  /** The latest observation per collector before `at`, so a past day is not filled with today. */
+  observationsBefore(at: number): Map<string, Observation> {
     const rows = this.db
       .prepare(
         `SELECT o.* FROM observations o
-         JOIN (SELECT collector, MAX(at) AS at FROM observations GROUP BY collector) latest
+         JOIN (SELECT collector, MAX(at) AS at FROM observations WHERE at < ? GROUP BY collector) latest
            ON o.collector = latest.collector AND o.at = latest.at`,
       )
-      .all() as Array<{ id: string; at: number; host: string; collector: string; facts: string; evidence: string }>
+      .all(at) as Array<{ id: string; at: number; host: string; collector: string; facts: string; evidence: string }>
     const observations = new Map<string, Observation>()
     for (const row of rows) {
       observations.set(row.collector, {
@@ -240,7 +386,8 @@ export class WatchStore {
   findings(where = '1 = 1', ...params: Array<string | number>): Finding[] {
     const rows = this.db
       .prepare(
-        `SELECT id, at, kind, severity, key, title, detail, epistemic, observation_id, status
+        `SELECT id, at, kind, severity, key, title, detail, epistemic, observation_id, status,
+                first_seen, last_seen, last_checked, resolved_at, recurrence_of
          FROM findings WHERE ${where} ORDER BY at DESC`,
       )
       .all(...params) as Array<{
@@ -254,6 +401,11 @@ export class WatchStore {
       epistemic: string
       observation_id: string
       status: string
+      first_seen: number
+      last_seen: number
+      last_checked: number | null
+      resolved_at: number | null
+      recurrence_of: string | null
     }>
     return rows.map((row) => ({
       type: 'finding',
@@ -267,6 +419,11 @@ export class WatchStore {
       epistemic: row.epistemic as Finding['epistemic'],
       observationId: row.observation_id,
       status: row.status as Finding['status'],
+      firstSeen: row.first_seen,
+      lastSeen: row.last_seen,
+      ...(row.last_checked !== null ? { lastChecked: row.last_checked } : {}),
+      ...(row.resolved_at !== null ? { resolvedAt: row.resolved_at } : {}),
+      ...(row.recurrence_of !== null ? { recurrenceOf: row.recurrence_of } : {}),
     }))
   }
 
@@ -356,5 +513,6 @@ export class WatchStore {
 
   close(): void {
     this.db.close()
+    this.releaseLock()
   }
 }

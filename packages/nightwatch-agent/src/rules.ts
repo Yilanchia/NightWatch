@@ -10,6 +10,30 @@ import type { Baseline, Fact, Finding, Observation, Severity } from './types.js'
 /** Ports that are almost never a deliberate new exposure. A new listener here is high. */
 const HIGH_RISK_PORTS = new Set([21, 23, 25, 110, 143, 445, 1433, 3306, 3389, 5432, 6379, 8888, 9090, 9200, 27017])
 
+/**
+ * How far a listener reaches. 0 = this machine only, 1 = a specific address, 2 = every address.
+ * A change from a smaller rank to a bigger one is an exposure change even when the port is the same.
+ */
+export function exposureRank(address: string): number {
+  const value = address.toLowerCase().replace(/^\[|\]$/g, '')
+  if (value === '127.0.0.1' || value.startsWith('127.') || value === '::1') return 0
+  if (value === '0.0.0.0' || value === '::' || value === '*' || value === '') return 2
+  return 1
+}
+
+function addressOf(entry: string): string {
+  const hostPart = entry.trim().split(/\s+/)[0] ?? ''
+  const index = hostPart.lastIndexOf(':')
+  return index > 0 ? hostPart.slice(0, index) : hostPart
+}
+
+/** The widest address a port fact names; `listenFacts` may merge several into one value. */
+function widestExposure(fact: Fact): number {
+  const entries = fact.value.split(' | ')
+  if (entries.length === 0) return 0
+  return Math.max(...entries.map((entry) => exposureRank(addressOf(entry))))
+}
+
 export interface PortChange {
   readonly added: Fact[]
   readonly removed: Fact[]
@@ -57,7 +81,7 @@ export function collectorFailed(observation: Observation): boolean {
 function portFindings(observation: Observation, before: readonly Fact[], at: number): Finding[] {
   const findings: Finding[] = []
   const current = observation.facts.filter((fact) => fact.kind === 'listen_port')
-  const { added } = diffFacts(
+  const { added, changed } = diffFacts(
     before.filter((fact) => fact.kind === 'listen_port'),
     current,
   )
@@ -77,13 +101,30 @@ function portFindings(observation: Observation, before: readonly Fact[], at: num
       ),
     )
   }
+  for (const { before: previous, after: currentFact } of changed) {
+    // Same port, wider reach: 127.0.0.1:3306 -> 0.0.0.0:3306 is the change that matters.
+    if (widestExposure(currentFact) <= widestExposure(previous)) continue
+    const port = Number(currentFact.key.split(':')[1])
+    const risky = Number.isInteger(port) && HIGH_RISK_PORTS.has(port)
+    findings.push(
+      finding(
+        at,
+        'listen_scope_expanded',
+        currentFact.key,
+        risky ? 'high' : 'medium',
+        `监听范围扩大了 ${currentFact.detail ?? currentFact.key}`,
+        `从 ${previous.detail ?? previous.value} 变成 ${currentFact.detail ?? currentFact.value}。同一个端口从本机/指定地址扩到了更宽的地址；外网是否真的可达还要看防火墙，但暴露面确实变大了。`,
+        'inferred',
+        observation.id,
+      ),
+    )
+  }
   return findings
 }
 
-function sshFindings(observation: Observation, before: readonly Fact[], at: number): Finding[] {
+function sshFindings(observation: Observation, before: readonly Fact[], at: number, hasBaseline: boolean): Finding[] {
   const findings: Finding[] = []
   const options = new Map(observation.facts.filter((fact) => fact.kind === 'ssh_option').map((fact) => [fact.key, fact]))
-  const describe = (fact: Fact | undefined): string => fact?.value ?? '（未读到）'
 
   const password = options.get('ssh:passwordauthentication')
   if (password && password.value.toLowerCase() === 'yes') {
@@ -102,21 +143,25 @@ function sshFindings(observation: Observation, before: readonly Fact[], at: numb
     )
   }
 
-  const beforeCount = before.find((fact) => fact.key === 'ssh:authorized_keys:count')
-  const nowCount = observation.facts.find((fact) => fact.key === 'ssh:authorized_keys:count')
-  if (nowCount && Number(nowCount.value) !== Number(beforeCount?.value ?? 0) && beforeCount !== undefined) {
-    findings.push(
-      finding(
-        at,
-        'ssh_authorized_keys_changed',
-        'ssh:authorized_keys:count',
-        'medium',
-        'SSH 授权公钥数量变了',
-        `从 ${describe(beforeCount)} 条变成 ${nowCount.value} 条。多出来的公钥就是一把能进来的钥匙。`,
-        'inferred',
-        observation.id,
-      ),
-    )
+  // Compare the fingerprint set, not the count: swapping one key for another is a new key.
+  if (hasBaseline) {
+    const beforeKeys = new Set(before.filter((fact) => fact.kind === 'ssh_authorized_key').map((fact) => fact.key))
+    for (const fact of observation.facts) {
+      if (fact.kind !== 'ssh_authorized_key' || beforeKeys.has(fact.key)) continue
+      const fingerprint = fact.key.split(':').pop() ?? fact.key
+      findings.push(
+        finding(
+          at,
+          'ssh_authorized_key_added',
+          fact.key,
+          'medium',
+          'SSH 授权公钥新增',
+          `${fact.value}（指纹 ${fingerprint}）不在基线里。新增一把能进来的钥匙，先确认是不是你加的。`,
+          'inferred',
+          observation.id,
+        ),
+      )
+    }
   }
   return findings
 }
@@ -159,7 +204,7 @@ export function diffSnapshot(baseline: Baseline | undefined, observations: Map<s
   if (baseline && ports && !collectorFailed(ports)) findings.push(...portFindings(ports, before, options.at))
 
   const ssh = observations.get('ssh')
-  if (ssh && ssh.facts.length > 0) findings.push(...sshFindings(ssh, before, options.at))
+  if (ssh && ssh.facts.length > 0) findings.push(...sshFindings(ssh, before, options.at, baseline !== undefined))
 
   const backup = observations.get('backup')
   if (backup) findings.push(...backupFindings(backup, options.at, options.backupStaleHours))

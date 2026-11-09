@@ -159,6 +159,9 @@ export interface CollectOptions {
   readonly now?: number
 }
 
+/** Observation ids are evidence ids; two passes in the same millisecond must not collide. */
+let observationSeq = 0
+
 /** One pass of every enabled collector. Disabled or unconfigured checks simply do not appear. */
 export function collectAll(config: CollectorConfig, options: CollectOptions = {}): Observation[] {
   const platform = options.platform ?? process.platform
@@ -174,7 +177,7 @@ export function collectAll(config: CollectorConfig, options: CollectOptions = {}
     .filter((entry): entry is [string, Read] => entry[1] !== undefined)
     .map(([collector, read]) => ({
       type: 'observation',
-      id: `obs-${now.toString(36)}-${collector}`,
+      id: `obs-${now.toString(36)}-${observationSeq++}-${collector}`,
       at: now,
       host,
       collector,

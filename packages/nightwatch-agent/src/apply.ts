@@ -34,6 +34,10 @@ function actionId(now: number, proposalId: string): string {
 }
 
 export function applyProposal(store: WatchStore, proposal: FixProposal, options: ApplyOptions): string {
+  // The proposal itself says whether it may be applied. A false flag is a refusal, not a hint.
+  if (!proposal.executable) {
+    return `不执行：这份提案标记为不可执行${proposal.reason ? `（${proposal.reason}）` : ''}。它只能作为计划留档。`
+  }
   if (!SUPPORTED.has(proposal.kind)) {
     return `不执行：${proposal.kind} 没有安全的机械改法。先由人处理，或者只把计划留在证据里。`
   }
@@ -83,6 +87,8 @@ export function applyProposal(store: WatchStore, proposal: FixProposal, options:
     try {
       copyFileSync(backup, file)
     } catch (rollbackError) {
+      // Restoring failed: the file may be half-written. Say so instead of claiming recovery.
+      outcome = 'failed'
       detail += `；回滚也失败：${message(rollbackError)}`
     }
     store.append({
@@ -97,7 +103,9 @@ export function applyProposal(store: WatchStore, proposal: FixProposal, options:
       outcome,
       detail,
     })
-    return `执行失败，已从备份恢复（${backup}）：${detail}`
+    return outcome === 'rolled-back'
+      ? `执行失败，已从备份恢复（${backup}）：${detail}`
+      : `执行失败，且回滚失败，文件可能处于中间状态（备份在 ${backup}，请手动核对）：${detail}`
   }
 
   store.append({

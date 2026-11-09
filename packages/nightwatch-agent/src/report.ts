@@ -21,6 +21,8 @@ export interface ReportInput {
   readonly findings: Finding[]
   /** Findings that are still open (candidate or verified). */
   readonly openFindings?: readonly Finding[]
+  /** Findings confirmed gone today, after a successful read. */
+  readonly resolved?: readonly Finding[]
   /** Collectors that did not read fully, e.g. "ports（读取失败）". */
   readonly blindSpots?: readonly string[]
   /** Things the report must say it could not judge, e.g. no baseline for ports. */
@@ -64,6 +66,8 @@ export function renderReport(input: ReportInput): string {
   const sentence: string[] = []
   if (fresh.length > 0) sentence.push(`今日新增 ${fresh.length} 条要看的`)
   if (open.length > 0) sentence.push(`未关闭 ${open.length} 条（高危 ${high} 条，中危 ${medium} 条）`)
+  const resolvedCount = (input.resolved ?? []).length
+  if (resolvedCount > 0) sentence.push(`已恢复 ${resolvedCount} 条`)
   if (blindSpots.length > 0) sentence.push(`有 ${blindSpots.length} 项没读全：${blindSpots.join('、')}`)
   for (const note of notes) sentence.push(note)
   if (sentence.length === 0) {
@@ -81,6 +85,15 @@ export function renderReport(input: ReportInput): string {
     for (const finding of open) lines.push(lineFor(finding, freshIds.has(finding.id)))
   }
   lines.push('')
+
+  if ((input.resolved ?? []).length > 0) {
+    lines.push('## 已恢复')
+    lines.push('')
+    for (const finding of input.resolved ?? []) {
+      lines.push(`- **[${finding.severity}] ${finding.title}**（首次 ${localTime(finding.firstSeen ?? finding.at)}，恢复 ${localTime(finding.resolvedAt ?? finding.at)}）`)
+    }
+    lines.push('')
+  }
 
   lines.push('## 采集健康')
   lines.push('')

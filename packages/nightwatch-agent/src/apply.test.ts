@@ -84,6 +84,23 @@ test('kinds without a mechanical edit are refused', () => {
   }
 })
 
+test('a proposal marked not executable is refused before touching the file', () => {
+  const { store, file, cleanup } = setup()
+  try {
+    const plan = {
+      ...proposal('ssh_password_authentication', 'PasswordAuthentication yes', 'PasswordAuthentication no'),
+      executable: false,
+      reason: '这一版只提案',
+    }
+    const message = applyProposal(store, plan, { sshdConfig: file, now: at })
+    assert.match(message, /不执行/)
+    assert.match(message, /这一版只提案/)
+    assert.match(readFileSync(file, 'utf8'), /PasswordAuthentication yes/)
+  } finally {
+    cleanup()
+  }
+})
+
 test('a missing file is refused, not guessed', () => {
   const { store, cleanup } = setup()
   try {
