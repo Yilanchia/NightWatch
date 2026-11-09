@@ -68,6 +68,11 @@ export interface Config {
   readonly sshdConfig?: string
   /** Defaults to `~/.ssh/authorized_keys`. */
   readonly authorizedKeys?: string
+  /**
+   * Register the repair executor. Off by default: a read-only watcher should not carry a key that
+   * can edit sshd_config until the owner explicitly asks for it.
+   */
+  readonly applyFix: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -81,6 +86,7 @@ export const Config: z<Config> = z.object({
   backupStaleHours: z.natural().default(36).description('A backup older than this many hours is a finding.'),
   sshdConfig: z.string().description('sshd_config path; platform default when absent.'),
   authorizedKeys: z.string().description('authorized_keys path; ~/.ssh/authorized_keys when absent.'),
+  applyFix: z.boolean().default(false).description('Register watch_apply_fix. Keep it off unless the owner explicitly wants repairs.'),
 })
 
 export function apply(ctx: Context, config: Config): void {
@@ -100,6 +106,7 @@ export function apply(ctx: Context, config: Config): void {
     backup: config.backup,
     backupPaths: config.backupPaths,
     backupStaleHours: config.backupStaleHours,
+    applyFix: config.applyFix,
     ...(config.sshdConfig ? { sshdConfig: config.sshdConfig } : {}),
     ...(config.authorizedKeys ? { authorizedKeys: config.authorizedKeys } : {}),
   }

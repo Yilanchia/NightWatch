@@ -27,10 +27,12 @@
 | 启动器 | `scripts/nightwatch.mjs`（profile `nightwatch`，home `.nightwatch-home/`，端口 3091） |
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
+| 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
 
-最近验证（2026-11-09）：`pnpm test` **32 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+最近验证（2026-11-09）：`pnpm test` **44 通过**；`node scripts/nightwatch.mjs smoke` 通过；
 `node scripts/nightwatch.mjs tick <home>` 在临时 home 里跑通完整巡检（无 DSH、无模型），
-`dist/inspect.js` 的依赖闭包里没有任何 `@deepseek-ai` 引用。
+`dist/inspect.js` 的依赖闭包里没有任何 `@deepseek-ai` 引用；实测覆盖“新增 → 持续 → 恢复 → 复发”、
+半行日志隔离、双写者拒绝。
 
 ## 代码地图
 
@@ -53,20 +55,22 @@
 以 `项目评审-2026-11-09.md` 为准，行号可能有偏移（代码已迁到本仓库）：
 
 1. ✅ **日报不跑规则**：已修。`writeReport` / `tick` 都走 `inspect.ts` 的统一管线，首次直接要日报也会跑规则。
-2. 🟡 **采集失败被写成消失**：`Observation` 已有 `status`，报告有“检查盲区”，`takeDiff` 不再把没读到的说成“消失”；还缺错误原因、有效期和规则侧的生命周期复核。
-3. ⬜ **漏报**：端口要比对监听地址/暴露范围（`127.0.0.1` → `0.0.0.0` 必须报），
-   authorized_keys 要比**指纹集合差**（等量替换也要报）；PID 变化只作上下文。
-4. ⬜ **发现生命周期**：`firstSeen / lastSeen / lastChecked / resolvedAt`，状态 candidate → verified →
-   fixed/invalid，加“持续 / 恢复 / 复发”事件；复发不能被同 key 去重吞掉。
-5. ⬜ **日志恢复**：半行尾巴不能直接续写。定一个尾部协议（隔离损坏段/换新段），补单写者锁、
-   事件 ID 唯一性、重建一致性校验。
-6. 🟡 顺手修：无基线时已不再把当前端口报成“新端口”；历史日报和 `apply` 的 `executable` 检查仍待修。
+2. 🟡 **采集失败被写成消失**：`Observation` 已有 `status`，报告有“检查盲区”，`takeDiff` 不再把没读到的说成“消失”；还缺错误原因、有效期和规则侧的完整复核（规则目前只看 `collectorFailed`）。
+3. ✅ **漏报**：端口比较监听范围（`127.0.0.1` → `0.0.0.0` 报 `listen_scope_expanded`），PID 变化不报；
+   authorized_keys 比**指纹集合差**（等量替换报 `ssh_authorized_key_added`）。
+4. ✅ **发现生命周期**：`firstSeen / lastSeen / lastChecked / resolvedAt / recurrenceOf`，
+   `finding-update` 事件；持续刷新、只有成功读取才关闭、复发保留 `recurrenceOf`；跨重启从日志重放一致。
+5. ✅ **日志恢复**：半行尾部隔离到 `watch.jsonl.torn-*` 并截到最后一个完整行；中间损坏/重复事件 ID 直接报错；
+   单写者锁；每次打开重建视图。
+6. ✅ 顺手修：历史日报按目标日期取当时的观测/基线/发现；无基线不再把当前端口报成“新端口”；
+   `apply` 检查 `executable`，回滚失败标为 `failed` 而不是 `rolled-back`。
 
 ## 下一步顺序（以 `docs/DSH改造与后续实施方案.md` 为准）
 
-1. **M0 剩余**：验证 Watch 专用宿主——最小组合、真实工具清单可枚举、危险工具不在列表里；
-   本轮已完成 M0 的“无模型巡检入口”（`nightwatch tick`）。
-2. **M1**：修上面 3/4/5/6 的 P0（监听范围、指纹集合、生命周期、日志恢复、历史日报、apply 契约），每个补边界测试。
+1. **M0 落地**：DSH 已证明能承载最小宿主（见 `docs/m0-host-research.md`）——6 行显式组合、
+   无 Session/llm/API key、工具面恰好 `watch_*`。下一步按报告 §7 的 YAML 把宿主从
+   `--from-default-profile web` 换成显式组合，并补启动自检。
+2. **M1 剩余**：P0-2 的完整部分——采集错误原因与有效期、规则侧对 partial 的复核；其余 P0 已完成。
 3. **M2**：持久化巡检任务 + 健康信息（最近成功 / 下次巡检 / 盲区）+ `watch_timeline`。
 4. 之后才考虑 osquery / Sigma / 多机；eBPF 和社区同步继续后置。
 
@@ -98,9 +102,9 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试、smoke 都是好的；M0 的无模型巡检入口已完成，`inspect.ts` 不依赖 DSH。
-- 剩下的是**产品契约**：监听范围/指纹集合、发现生命周期、日志恢复、历史日报、apply 契约，以及 M0 的宿主验证。
-- 下一步先做 M0 宿主验证，再按 M1 修 P0；别先接 osquery。
+- 代码、测试（44）、smoke 都是好的；巡检核心 `inspect.ts` 不依赖 DSH，`tick` 可无模型运行。
+- P0 已修 1/3/4/5/6；P0-2 做了主路径（状态、盲区、不误报消失），还缺错误原因与有效期。
+- 下一步：按 `m0-host-research.md` §7 落 M0 显式组合（含启动自检），再补 P0-2 剩余；别先接 osquery。
 
 ---
 

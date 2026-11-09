@@ -22,6 +22,8 @@ export interface WatchConfig {
   readonly backup: boolean
   readonly backupPaths: readonly string[]
   readonly backupStaleHours: number
+  /** Register the repair executor. Defaults to false when absent. */
+  readonly applyFix?: boolean
   readonly sshdConfig?: string
   readonly authorizedKeys?: string
 }
@@ -134,7 +136,8 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
     }),
   )
 
-  ctx.tools.register(
+  // The executor is opt-in. A read-only watcher should not even expose a repair key by default.
+  if (watch.config.applyFix) ctx.tools.register(
     defineTool({
       name: 'watch_apply_fix',
       description:
