@@ -6,6 +6,7 @@ import type { Runner } from './collect.js'
 import { takeBaseline, takeDiff, writeReport } from './inspect.js'
 import { buildProposal, formatProposal } from './propose.js'
 import type { WatchStore } from './store.js'
+import { timelineText } from './timeline.js'
 
 /**
  * The DSH adapter. It owns no inspection logic: every tool here is a thin wrapper over the
@@ -22,6 +23,8 @@ export interface WatchConfig {
   readonly backup: boolean
   readonly backupPaths: readonly string[]
   readonly backupStaleHours: number
+  /** How long a successful read stays usable; older data is reported as stale. Defaults to 26. */
+  readonly observationValidHours?: number
   /** Register the repair executor. Defaults to false when absent. */
   readonly applyFix?: boolean
   readonly sshdConfig?: string
@@ -132,6 +135,22 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
       output: TEXT_OUTPUT,
       async execute({ findingId, key }: { findingId?: string; key?: string }) {
         return proposeFix(watch, { ...(findingId ? { findingId } : {}), ...(key ? { key } : {}) })
+      },
+    }),
+  )
+
+  ctx.tools.register(
+    defineTool({
+      name: 'watch_timeline',
+      description:
+        'Show one fact over a time window: reads, the finding it produced, confirmations and resolution, plus any gap where the check did not run. Read-only.',
+      parameters: {
+        key: { type: 'string', required: true, description: 'Fact key, e.g. tcp:3306 or ssh:passwordauthentication.' },
+        days: { type: 'number', description: 'How far back to look, in days. Defaults to 7.' },
+      },
+      output: TEXT_OUTPUT,
+      async execute({ key, days }: { key: string; days?: number }) {
+        return timelineText(watch.store, key, days ?? 7, at(watch))
       },
     }),
   )

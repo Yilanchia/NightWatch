@@ -163,6 +163,51 @@ test('an unreadable sshd_config is partial, not a pass', () => {
   }
 })
 
+test('a failed read says why, in short machine terms', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-reason-'))
+  const keys = join(dir, 'authorized_keys')
+  writeFileSync(keys, '', 'utf8')
+  const { context, cleanup } = setup(ssFailed, {
+    ports: true,
+    ssh: true,
+    sshdConfig: join(dir, 'missing-sshd_config'),
+    authorizedKeys: keys,
+  })
+  try {
+    const result = runInspection(context)
+    const ports = result.observations.find((observation) => observation.collector === 'ports')!
+    const ssh = result.observations.find((observation) => observation.collector === 'ssh')!
+    assert.match(ports.error ?? '', /退出码 127/)
+    assert.match(ssh.error ?? '', /文件不存在/)
+    const text = readFileSync(result.reportPath, 'utf8')
+    assert.match(text, /原因：/)
+  } finally {
+    cleanup()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a failed read older than the validity window is reported as stale data', () => {
+  const { context, store, cleanup } = setup(ssFailed)
+  try {
+    store.append({
+      type: 'observation',
+      id: 'obs-old',
+      at: at - 30 * 3_600_000,
+      host: 'host',
+      collector: 'ports',
+      facts: [{ kind: 'listen_port', key: 'tcp:22', value: '0.0.0.0:22' }],
+      evidence: [{ command: 'ss -ltnp', exit: 0, outputSha256: 'x' }],
+      status: 'ok',
+    })
+    const result = runInspection(context, { now: at })
+    assert.ok(result.notes.some((note) => note.includes('数据已过期')))
+    assert.match(readFileSync(result.reportPath, 'utf8'), /数据已过期/)
+  } finally {
+    cleanup()
+  }
+})
+
 test('a report for a past day uses that day observations, not today reading', () => {
   const dir = mkdtempSync(join(tmpdir(), 'nightwatch-history-'))
   const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))

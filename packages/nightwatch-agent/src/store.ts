@@ -11,7 +11,8 @@ import {
   writeSync,
 } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Baseline, Fact, Finding, FixChange, FixProposal, Observation, WatchEvent } from './types.js'
+import { statusOf } from './health.js'
+import type { Baseline, Fact, Finding, FixChange, FixProposal, Observation, ObservationStatus, TimelinePoint, WatchEvent } from './types.js'
 
 /**
  * The evidence log and its view.
@@ -31,6 +32,7 @@ export interface Recovery {
 const SCHEMA = `
 DROP TABLE IF EXISTS observations;
 DROP TABLE IF EXISTS findings;
+DROP TABLE IF EXISTS finding_updates;
 DROP TABLE IF EXISTS baselines;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS proposals;
@@ -41,7 +43,9 @@ CREATE TABLE observations (
   host TEXT NOT NULL,
   collector TEXT NOT NULL,
   facts TEXT NOT NULL,
-  evidence TEXT NOT NULL
+  evidence TEXT NOT NULL,
+  status TEXT,
+  error TEXT
 );
 CREATE TABLE findings (
   id TEXT PRIMARY KEY,
@@ -60,6 +64,16 @@ CREATE TABLE findings (
   resolved_at INTEGER,
   recurrence_of TEXT
 );
+CREATE TABLE finding_updates (
+  id TEXT PRIMARY KEY,
+  at INTEGER NOT NULL,
+  finding_id TEXT NOT NULL,
+  status TEXT,
+  last_seen INTEGER,
+  last_checked INTEGER,
+  resolved_at INTEGER
+);
+CREATE INDEX finding_updates_by_finding ON finding_updates (finding_id, at);
 CREATE TABLE IF NOT EXISTS baselines (
   id TEXT PRIMARY KEY,
   at INTEGER NOT NULL,
@@ -231,7 +245,7 @@ export class WatchStore {
   /** Drops the view and replays the log. Always called on open, so the view can never drift. */
   rebuild(): void {
     this.db.exec(
-      'DELETE FROM observations; DELETE FROM findings; DELETE FROM baselines; DELETE FROM reports; DELETE FROM proposals; DELETE FROM actions;',
+      'DELETE FROM observations; DELETE FROM findings; DELETE FROM finding_updates; DELETE FROM baselines; DELETE FROM reports; DELETE FROM proposals; DELETE FROM actions;',
     )
     this.ids.clear()
     for (const event of this.events()) {
@@ -247,8 +261,17 @@ export class WatchStore {
     switch (event.type) {
       case 'observation':
         this.db
-          .prepare('INSERT OR REPLACE INTO observations (id, at, host, collector, facts, evidence) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(event.id, event.at, event.host, event.collector, JSON.stringify(event.facts), JSON.stringify(event.evidence))
+          .prepare('INSERT OR REPLACE INTO observations (id, at, host, collector, facts, evidence, status, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(
+            event.id,
+            event.at,
+            event.host,
+            event.collector,
+            JSON.stringify(event.facts),
+            JSON.stringify(event.evidence),
+            event.status ?? statusOf(event.evidence),
+            event.error ?? null,
+          )
         return
       case 'finding':
         this.db
@@ -274,6 +297,17 @@ export class WatchStore {
           )
         return
       case 'finding-update':
+        this.db
+          .prepare('INSERT OR REPLACE INTO finding_updates (id, at, finding_id, status, last_seen, last_checked, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(
+            event.id,
+            event.at,
+            event.findingId,
+            event.status ?? null,
+            event.lastSeen ?? null,
+            event.lastChecked ?? null,
+            event.resolvedAt ?? null,
+          )
         this.db
           .prepare(
             'UPDATE findings SET status = COALESCE(?, status), last_seen = COALESCE(?, last_seen), last_checked = COALESCE(?, last_checked), resolved_at = COALESCE(?, resolved_at) WHERE id = ?',
@@ -362,7 +396,16 @@ export class WatchStore {
          JOIN (SELECT collector, MAX(at) AS at FROM observations WHERE at < ? GROUP BY collector) latest
            ON o.collector = latest.collector AND o.at = latest.at`,
       )
-      .all(at) as Array<{ id: string; at: number; host: string; collector: string; facts: string; evidence: string }>
+      .all(at) as Array<{
+      id: string
+      at: number
+      host: string
+      collector: string
+      facts: string
+      evidence: string
+      status: string | null
+      error: string | null
+    }>
     const observations = new Map<string, Observation>()
     for (const row of rows) {
       observations.set(row.collector, {
@@ -373,9 +416,19 @@ export class WatchStore {
         collector: row.collector,
         facts: JSON.parse(row.facts) as Fact[],
         evidence: JSON.parse(row.evidence) as Observation['evidence'],
+        ...(row.status ? { status: row.status as ObservationStatus } : {}),
+        ...(row.error ? { error: row.error } : {}),
       })
     }
     return observations
+  }
+
+  /** Last time this collector read successfully, for the "data is getting old" note. */
+  lastOkAt(collector: string): number | undefined {
+    const row = this.db
+      .prepare("SELECT MAX(at) AS at FROM observations WHERE collector = ? AND status = 'ok'")
+      .get(collector) as { at: number | null } | undefined
+    return row?.at ?? undefined
   }
 
   /** Findings that still stand (candidate or verified), newest first. */
@@ -509,6 +562,51 @@ export class WatchStore {
       executable: row.executable === 1,
       ...(row.reason ? { reason: row.reason } : {}),
     }
+  }
+
+  /**
+   * What happened to one fact between two instants: reads, the finding, confirmations, resolution.
+   * A missing read is a gap the caller can see by its absence, not a "no change" claim.
+   */
+  timeline(key: string, from: number, to: number): TimelinePoint[] {
+    const points: TimelinePoint[] = []
+    const observations = this.db
+      .prepare('SELECT at, collector, facts, status FROM observations WHERE at >= ? AND at <= ? ORDER BY at')
+      .all(from, to) as Array<{ at: number; collector: string; facts: string; status: string | null }>
+    for (const row of observations) {
+      const fact = (JSON.parse(row.facts) as Fact[]).find((candidate) => candidate.key === key)
+      if (!fact) continue
+      points.push({
+        at: row.at,
+        kind: 'observed',
+        collector: row.collector,
+        ...(row.status ? { status: row.status as ObservationStatus } : {}),
+        detail: fact.value,
+      })
+    }
+
+    const findings = this.db
+      .prepare('SELECT id, at, title, status FROM findings WHERE key = ? AND at >= ? AND at <= ?')
+      .all(key, from, to) as Array<{ id: string; at: number; title: string; status: string }>
+    for (const row of findings) {
+      points.push({ at: row.at, kind: 'finding', detail: `${row.title}（${row.status}）` })
+    }
+
+    const updates = this.db
+      .prepare(
+        `SELECT u.at, u.status, f.title FROM finding_updates u JOIN findings f ON f.id = u.finding_id
+         WHERE f.key = ? AND u.at >= ? AND u.at <= ? ORDER BY u.at`,
+      )
+      .all(key, from, to) as Array<{ at: number; status: string | null; title: string }>
+    for (const row of updates) {
+      points.push({
+        at: row.at,
+        kind: row.status === 'fixed' ? 'resolved' : 'confirmed',
+        detail: row.status === 'fixed' ? `${row.title} 已恢复` : `${row.title} 仍然存在`,
+      })
+    }
+
+    return points.sort((left, right) => left.at - right.at)
   }
 
   close(): void {

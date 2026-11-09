@@ -21,6 +21,7 @@ node scripts/nightwatch.mjs web
 ```powershell
 node scripts/nightwatch.mjs baseline <home>   # 采一次并记为基线
 node scripts/nightwatch.mjs tick <home>       # 采集 → 落盘 → 规则 → 状态复核 → 日报
+node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实的时间线
 ```
 
 `tick` 直接调用 `packages/nightwatch-agent/src/inspect.ts`；这个模块不 import DSH，
@@ -58,7 +59,8 @@ node scripts/nightwatch.mjs tick <home>       # 采集 → 落盘 → 规则 →
 | `watch_diff` | 再采一次，和基线比，记新发现（同一个 key 不重复报） |
 | `watch_report` | 写某天的 Markdown 日报，返回路径 |
 | `watch_propose_fix` | 对一条发现产出修复计划：改哪一行、风险、回滚、验证 |
-| `watch_apply_fix` | 应用一份计划。guard 判 destructive、先问主人；只支持三种 SSH 改行；备份、校验、失败回滚；不 reload |
+| `watch_timeline` | 按 key + 时间窗回放：读到 / 发现 / 仍存在 / 已恢复；缺口照实说 |
+| `watch_apply_fix` | 应用一份计划。默认不注册；`applyFix: true` 才出现。guard 判 destructive、先问主人；只支持三种 SSH 改行；备份、校验、失败回滚；不 reload |
 
 ## 安全边界
 
@@ -71,7 +73,7 @@ node scripts/nightwatch.mjs tick <home>       # 采集 → 落盘 → 规则 →
 
 ## 已知问题
 
-评审 P0：日报跑规则、失败采集写成消失（主路径）、监听范围/等量换钥漏报、发现生命周期、崩溃尾行粘连、历史日报混入当前都已处理（见 [2026-11-09-工作记录.md](2026-11-09-工作记录.md)）；还欠采集错误原因/有效期、规则侧 partial 复核、M0 宿主验证与 7 天观察。完整清单见根目录 [项目评审-2026-11-09.md](../项目评审-2026-11-09.md)，改造顺序见 [DSH改造与后续实施方案.md](DSH改造与后续实施方案.md)。
+评审 P0 已全部处理（见 [2026-11-09-工作记录.md](2026-11-09-工作记录.md)）；还欠 M0 宿主显式组合落地、M2 常驻调度与健康查询、7 天观察。完整清单见根目录 [项目评审-2026-11-09.md](../项目评审-2026-11-09.md)，改造顺序见 [DSH改造与后续实施方案.md](DSH改造与后续实施方案.md)。
 
 ## 设计材料
 

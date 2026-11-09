@@ -23,12 +23,12 @@
 
 ## 现状（2026-11-09，评审后）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；以及**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；以及**时间线** `watch_timeline` / `nightwatch timeline`。
 
 **已知问题**：
 
 1. ~~日报不跑规则~~：已修。`watch_report` / `nightwatch tick` 都走完整巡检管线，首次直接要日报也会发现当前风险；
-2. 采集健康：`Observation` 已有 `status`，报告会标“盲区”而不是“无变化”；错误原因、有效期和规则侧对 partial 的复核还没补完；
+2. ~~采集失败被写成消失~~：已修。`Observation` 带 `status` + `error`，报告有“检查盲区”“原因”和“数据已过期”；旧数据不冒充当前；
 3. ~~监听范围扩大 / 等量换公钥漏报~~：已修。前者报 `listen_scope_expanded`，后者比指纹集合差；
 4. ~~发现只有去重、没有生命周期~~：已修。sustained / resolved / recurrence 都有记录，跨重启从日志重放；
 5. ~~崩溃尾行粘连~~：已修。半行隔离到 `.torn-*`，中间损坏和重复 ID 直接报错，单写者锁；
@@ -79,6 +79,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `watch_diff` | 再采一次，和基线比，记新发现 |
 | `watch_report` | 写某天的 Markdown 日报 |
 | `watch_propose_fix` | 对一条发现产出修复计划（改哪行、风险、回滚、验证） |
+| `watch_timeline` | 按 key + 时间窗回放：读到 / 发现 / 仍存在 / 已恢复，缺口照实说 |
 | `watch_apply_fix` | 应用计划（仅三种 SSH 改行；guard 判 destructive；备份/校验/回滚；不 reload）。**默认不注册**，`applyFix: true` 才出现 |
 
 ## 命令行（无模型）
@@ -89,6 +90,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 |---|---|
 | `node scripts/nightwatch.mjs baseline <home>` | 采一次并记为基线——明确的主人的动作，不会自动重设 |
 | `node scripts/nightwatch.mjs tick <home>` | 跑一轮完整巡检，写当天的日报；采集失败时退出码非 0 |
+| `node scripts/nightwatch.mjs timeline <home> <key> [days]` | 回放一个事实的时间线（默认 7 天） |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
 
 ## 代码结构

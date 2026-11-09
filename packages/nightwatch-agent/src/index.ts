@@ -22,6 +22,7 @@ export { buildProposal, formatProposal } from './propose.js'
 export { diffFacts, diffSnapshot, mapByKey } from './rules.js'
 export { renderReport } from './report.js'
 export { WatchStore } from './store.js'
+export { queryTimeline, renderTimeline, timelineText, type TimelineResult } from './timeline.js'
 export { proposeFix, applyFix, type WatchConfig, type WatchContext } from './tools.js'
 export type {
   Baseline,
@@ -36,6 +37,7 @@ export type {
   ObservationStatus,
   Severity,
   Snapshot,
+  TimelinePoint,
   WatchEvent,
 } from './types.js'
 
@@ -64,6 +66,8 @@ export interface Config {
   readonly backupPaths: string[]
   /** A backup older than this many hours is a finding. */
   readonly backupStaleHours: number
+  /** A successful read older than this many hours is reported as stale, not as current. */
+  readonly observationValidHours: number
   /** Defaults to the platform's sshd_config. */
   readonly sshdConfig?: string
   /** Defaults to `~/.ssh/authorized_keys`. */
@@ -84,6 +88,7 @@ export const Config: z<Config> = z.object({
   backup: z.boolean().default(true).description('Check the newest file under backupPaths.'),
   backupPaths: z.array(z.string()).default([]).description('Files or directories to treat as backups.'),
   backupStaleHours: z.natural().default(36).description('A backup older than this many hours is a finding.'),
+  observationValidHours: z.natural().default(26).description('A successful read older than this is reported as stale data.'),
   sshdConfig: z.string().description('sshd_config path; platform default when absent.'),
   authorizedKeys: z.string().description('authorized_keys path; ~/.ssh/authorized_keys when absent.'),
   applyFix: z.boolean().default(false).description('Register watch_apply_fix. Keep it off unless the owner explicitly wants repairs.'),
@@ -106,6 +111,7 @@ export function apply(ctx: Context, config: Config): void {
     backup: config.backup,
     backupPaths: config.backupPaths,
     backupStaleHours: config.backupStaleHours,
+    observationValidHours: config.observationValidHours,
     applyFix: config.applyFix,
     ...(config.sshdConfig ? { sshdConfig: config.sshdConfig } : {}),
     ...(config.authorizedKeys ? { authorizedKeys: config.authorizedKeys } : {}),

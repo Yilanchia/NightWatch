@@ -9,6 +9,7 @@
 //   node scripts/nightwatch.mjs smoke   boot once in a throwaway home and check the plugin loads
 //   node scripts/nightwatch.mjs tick    run one full inspection with no session and no model
 //   node scripts/nightwatch.mjs baseline  accept the current state as the reference (owner action)
+//   node scripts/nightwatch.mjs timeline  show one fact's reads/findings/resolution over a window
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -133,6 +134,7 @@ function coreConfig(home) {
     backup: process.env.NIGHTWATCH_BACKUP !== '0',
     backupPaths: (process.env.NIGHTWATCH_BACKUP_PATHS ?? '').split(';').filter(Boolean),
     backupStaleHours: Number(process.env.NIGHTWATCH_BACKUP_STALE_HOURS ?? 36),
+    observationValidHours: Number(process.env.NIGHTWATCH_VALID_HOURS ?? 26),
     ...(process.env.NIGHTWATCH_SSHD_CONFIG ? { sshdConfig: process.env.NIGHTWATCH_SSHD_CONFIG } : {}),
     ...(process.env.NIGHTWATCH_AUTHORIZED_KEYS ? { authorizedKeys: process.env.NIGHTWATCH_AUTHORIZED_KEYS } : {}),
   }
@@ -167,6 +169,17 @@ async function baseline(home) {
   }
 }
 
+/** One fact's history over a window, from the evidence view. */
+async function timeline(home, key, days) {
+  const { store } = await openCore(home)
+  try {
+    const { timelineText } = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'timeline.js')).href)
+    console.log(timelineText(store, key, Number(days ?? 7), Date.now()))
+  } finally {
+    store.close()
+  }
+}
+
 const command = process.argv[2] ?? 'web'
 try {
   const at = place(process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
@@ -187,6 +200,12 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await (command === 'tick' ? tick(home) : baseline(home))
+  } else if (command === 'timeline') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    const key = process.argv[4]
+    if (!key) throw new Error('timeline 需要 key，例如 tcp:3306 或 ssh:passwordauthentication')
+    await timeline(home, key, process.argv[5])
   } else {
     throw new Error(`unknown command ${command}`)
   }

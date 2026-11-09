@@ -107,6 +107,10 @@ export function renderReport(input: ReportInput): string {
   if (blindSpots.length > 0) {
     lines.push('')
     lines.push(`**检查盲区**：${blindSpots.join('、')} 没有读全。这些部分今天判不出来，不能当成"没有变化"。`)
+    const reasons = [...input.observations.entries()]
+      .filter(([, observation]) => observationStatus(observation) !== 'ok' && observation.error !== undefined)
+      .map(([name, observation]) => `${name}：${observation.error}`)
+    if (reasons.length > 0) lines.push(`原因：${reasons.join('；')}`)
   }
   lines.push('')
 

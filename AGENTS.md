@@ -13,8 +13,8 @@
 2. **唯一跨项目依赖是 `@fairy/guard`**，通过 `packages/nightwatch-host/package.json` 的
    `link:../../../fairy-framework/packages/guard/fairy-guard` 只读消费。看它的源码可以，改它不行。
 3. **中文名用于文档和对话，英文名用于目录/包/代码**：Nightwatch、`@nightwatch/agent`、`@nightwatch/host`。
-4. **只读优先。** 执行入口（`watch_apply_fix`）存在，但按评审建议应尽快改成**配置开关、默认关闭**；
-   在 P0 修完前不要扩大执行范围。
+4. **只读优先。** 执行入口 `watch_apply_fix` 现在**默认不注册**（`applyFix` 默认 `false`）；
+   要继续扩大执行面，先过评审和 7 天观察窗。
 5. **工具名保留 `watch_*`**（`watch_baseline` / `watch_diff` / `watch_report` / `watch_propose_fix` / `watch_apply_fix`），
    它们描述的是“观察”，不是旧项目名。
 
@@ -29,10 +29,10 @@
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
 
-最近验证（2026-11-09）：`pnpm test` **44 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+最近验证（2026-11-09）：`pnpm test` **49 通过**；`node scripts/nightwatch.mjs smoke` 通过；
 `node scripts/nightwatch.mjs tick <home>` 在临时 home 里跑通完整巡检（无 DSH、无模型），
 `dist/inspect.js` 的依赖闭包里没有任何 `@deepseek-ai` 引用；实测覆盖“新增 → 持续 → 恢复 → 复发”、
-半行日志隔离、双写者拒绝。
+半行日志隔离、双写者拒绝、时间线回放。
 
 ## 代码地图
 
@@ -44,8 +44,9 @@
 | `src/collect.ts` `src/parse.ts` | 只读采集（端口/SSH/备份）与纯解析；命令写死 |
 | `src/store.ts` | `watch.jsonl` 只追加 + `watch.db`（`node:sqlite`）物化视图 |
 | `src/rules.ts` | 基线差分与规则，finding 带 `observationId` |
-| `src/report.ts` | 日报 Markdown 渲染（未关闭风险 / 采集健康 / 盲区） |
-| `src/tools.ts` | **薄适配层**：五个 `watch_*` 工具，只转调 `inspect.ts`，不含业务规则 |
+| `src/report.ts` | 日报 Markdown 渲染（未关闭风险 / 已恢复 / 采集健康 / 盲区 / 原因） |
+| `src/timeline.ts` | `watch_timeline`：按 key + 时间窗回放读到/发现/仍存在/已恢复 |
+| `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
 | `src/propose.ts` | 修复计划（改哪行、风险、回滚、验证） |
 | `src/apply.ts` | 应用计划（仅三种 SSH 改行；备份/校验/回滚） |
 | `*.test.ts` | 解析、存储重建、规则、工具端到端、巡检管线、提案、执行 |
@@ -55,7 +56,8 @@
 以 `项目评审-2026-11-09.md` 为准，行号可能有偏移（代码已迁到本仓库）：
 
 1. ✅ **日报不跑规则**：已修。`writeReport` / `tick` 都走 `inspect.ts` 的统一管线，首次直接要日报也会跑规则。
-2. 🟡 **采集失败被写成消失**：`Observation` 已有 `status`，报告有“检查盲区”，`takeDiff` 不再把没读到的说成“消失”；还缺错误原因、有效期和规则侧的完整复核（规则目前只看 `collectorFailed`）。
+2. ✅ **采集失败被写成消失**：`Observation` 带 `status` + `error`，每条证据带短原因（退出码/文件不存在）；
+   报告有“检查盲区”“原因”和“数据已过期”（`observationValidHours`，默认 26h）；`takeDiff` 不再误报消失。
 3. ✅ **漏报**：端口比较监听范围（`127.0.0.1` → `0.0.0.0` 报 `listen_scope_expanded`），PID 变化不报；
    authorized_keys 比**指纹集合差**（等量替换报 `ssh_authorized_key_added`）。
 4. ✅ **发现生命周期**：`firstSeen / lastSeen / lastChecked / resolvedAt / recurrenceOf`，
@@ -70,9 +72,9 @@
 1. **M0 落地**：DSH 已证明能承载最小宿主（见 `docs/m0-host-research.md`）——6 行显式组合、
    无 Session/llm/API key、工具面恰好 `watch_*`。下一步按报告 §7 的 YAML 把宿主从
    `--from-default-profile web` 换成显式组合，并补启动自检。
-2. **M1 剩余**：P0-2 的完整部分——采集错误原因与有效期、规则侧对 partial 的复核；其余 P0 已完成。
-3. **M2**：持久化巡检任务 + 健康信息（最近成功 / 下次巡检 / 盲区）+ `watch_timeline`。
-4. 之后才考虑 osquery / Sigma / 多机；eBPF 和社区同步继续后置。
+2. **M2**：持久化巡检任务（cron/systemd / 常驻入口）、`getHealth()`（最近成功 / 下次巡检 / 盲区，
+   数据源已具备：`observations.status`、`lastOkAt`）。
+3. 之后才是 osquery / Sigma / 多机；eBPF 和社区同步继续后置；7 天验收在 M2 之后开始。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
 风险恢复与复发都能解释；删 SQLite 后结果一致；巡检不需要云模型或系统写权限。
@@ -96,15 +98,16 @@ pnpm test
 node scripts/nightwatch.mjs smoke
 node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线
 node scripts/nightwatch.mjs tick <home>       # 无模型：跑一轮完整巡检
+node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实的时间线
 node scripts/nightwatch.mjs web
 node scripts/nightwatch.mjs dump
 ```
 
 ## 交接时的状态
 
-- 代码、测试（44）、smoke 都是好的；巡检核心 `inspect.ts` 不依赖 DSH，`tick` 可无模型运行。
-- P0 已修 1/3/4/5/6；P0-2 做了主路径（状态、盲区、不误报消失），还缺错误原因与有效期。
-- 下一步：按 `m0-host-research.md` §7 落 M0 显式组合（含启动自检），再补 P0-2 剩余；别先接 osquery。
+- 代码、测试（49）、smoke 都是好的；巡检核心 `inspect.ts` / `timeline.ts` 不依赖 DSH，`tick` 可无模型运行。
+- P0 全部修完（1–6）；还差 M0 宿主显式组合落地、M2 常驻调度与健康查询、7 天验收。
+- 下一步：按 `m0-host-research.md` §7 落 M0 显式组合（含启动自检），再做 M2；别先接 osquery。
 
 ---
 

@@ -81,6 +81,22 @@ function judgementNotes(observations: readonly Observation[], baseline: Baseline
   return notes
 }
 
+/** A failed read does not make yesterday's success current; say how old the usable data is. */
+function stalenessNotes(ctx: WatchContext, observations: readonly Observation[], now: number): string[] {
+  const hours = ctx.config.observationValidHours ?? 26
+  const notes: string[] = []
+  for (const observation of observations) {
+    if (observationStatus(observation) === 'ok') continue
+    const lastOk = ctx.store.lastOkAt(observation.collector)
+    if (lastOk === undefined) continue
+    const ageHours = (now - lastOk) / 3_600_000
+    if (ageHours > hours) {
+      notes.push(`${observation.collector} 上次成功是 ${Math.round(ageHours)} 小时前，数据已过期（阈值 ${hours} 小时）`)
+    }
+  }
+  return notes
+}
+
 function at(ctx: WatchContext): number {
   return ctx.now ? ctx.now() : Date.now()
 }
@@ -186,7 +202,7 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
   const host = observations[0]?.host ?? hostname()
   const health = overallStatus(observations)
   const blindSpots = blindSpotLabels(observations)
-  const notes = judgementNotes(observations, baseline)
+  const notes = [...judgementNotes(observations, baseline), ...stalenessNotes(ctx, observations, now)]
   const openFindings = ctx.store.openFindings()
   const day = localDay(now)
 

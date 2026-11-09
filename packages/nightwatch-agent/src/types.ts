@@ -38,6 +38,8 @@ export interface Evidence {
   readonly exit: number
   /** SHA-256 of the raw output, so the same read can be checked later. */
   readonly outputSha256: string
+  /** Short machine reason when the read did not succeed, e.g. `退出码 127` / `文件不存在`. */
+  readonly reason?: string
 }
 
 /** How much of a collector's intended read actually happened. */
@@ -57,6 +59,8 @@ export interface Observation {
    * when absent. A failed read is a blind spot, never evidence that something disappeared.
    */
   readonly status?: ObservationStatus
+  /** Why the collector is not ok, short and machine-made (never raw stderr). */
+  readonly error?: string
 }
 
 export interface Finding {
@@ -145,6 +149,15 @@ export interface FixProposal {
   readonly executable: boolean
   /** Why it is not executable, or what a human must decide first. */
   readonly reason?: string
+}
+
+/** One point on a fact's timeline: a read, a finding, a confirmation, or a resolution. */
+export interface TimelinePoint {
+  readonly at: number
+  readonly kind: 'observed' | 'finding' | 'confirmed' | 'resolved'
+  readonly collector?: string
+  readonly status?: ObservationStatus
+  readonly detail: string
 }
 
 export type WatchEvent = Observation | Finding | FindingUpdate | Baseline | ReportEvent | FixProposal | FixAction

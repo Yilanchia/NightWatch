@@ -69,6 +69,24 @@ test('deleting the view rebuilds it from the log alone', () => {
   cleanup()
 })
 
+test('lastOkAt only counts successful reads', () => {
+  const { jsonl, db, cleanup } = fixture()
+  const store = new WatchStore(jsonl, db)
+  store.append(observation())
+  store.append({
+    ...observation(),
+    id: 'obs-2',
+    at: at + 1000,
+    evidence: [{ command: 'ss -ltnp', exit: 1, outputSha256: 'x', reason: '退出码 1' }],
+    status: 'failed',
+  })
+  store.append({ ...observation(), id: 'obs-3', collector: 'ssh' })
+  assert.equal(store.lastOkAt('ports'), at)
+  assert.equal(store.lastOkAt('ssh'), at)
+  store.close()
+  cleanup()
+})
+
 test('a torn last line is moved aside and the next event survives a reopen', () => {
   const { jsonl, db, cleanup } = fixture()
   const store = new WatchStore(jsonl, db)

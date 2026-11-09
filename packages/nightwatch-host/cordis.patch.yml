@@ -23,5 +23,6 @@
         backup: true
         backupPaths: []
         backupStaleHours: 36
+        observationValidHours: 26
         # Off by default: the executor is only registered when the owner explicitly enables it.
         applyFix: false

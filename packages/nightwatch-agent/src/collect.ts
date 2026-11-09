@@ -54,16 +54,21 @@ interface Read {
 }
 
 function evidenceOf(command: string, result: RunResult): Evidence {
-  return { command, exit: result.exit, outputSha256: digest(result.stdout) }
+  return {
+    command,
+    exit: result.exit,
+    outputSha256: digest(result.stdout),
+    ...(result.exit !== 0 ? { reason: `退出码 ${result.exit}` } : {}),
+  }
 }
 
 function readFileEvidence(command: string, path: string): { text?: string; evidence: Evidence } {
-  if (!existsSync(path)) return { evidence: { command, exit: 1, outputSha256: digest('') } }
+  if (!existsSync(path)) return { evidence: { command, exit: 1, outputSha256: digest(''), reason: '文件不存在' } }
   try {
     const text = readFileSync(path, 'utf8')
     return { text, evidence: { command, exit: 0, outputSha256: digest(text) } }
   } catch {
-    return { evidence: { command, exit: 1, outputSha256: digest('') } }
+    return { evidence: { command, exit: 1, outputSha256: digest(''), reason: '无法读取（权限或 IO）' } }
   }
 }
 
@@ -137,7 +142,12 @@ function collectBackup(config: CollectorConfig): Read | undefined {
   const evidence: Evidence[] = []
   for (const path of config.backupPaths) {
     const newest = newestUnder(path)
-    evidence.push({ command: `stat ${path}`, exit: newest ? 0 : 1, outputSha256: digest(newest ? `${newest.at}:${newest.name}:${newest.size}` : '') })
+    evidence.push({
+      command: `stat ${path}`,
+      exit: newest ? 0 : 1,
+      outputSha256: digest(newest ? `${newest.at}:${newest.name}:${newest.size}` : ''),
+      ...(newest ? {} : { reason: '路径不存在或不可读' }),
+    })
     if (!newest) {
       facts.push({ kind: 'backup', key: `backup:missing:${path}`, value: 'not found', detail: path })
       continue
@@ -175,14 +185,21 @@ export function collectAll(config: CollectorConfig, options: CollectOptions = {}
 
   return reads
     .filter((entry): entry is [string, Read] => entry[1] !== undefined)
-    .map(([collector, read]) => ({
-      type: 'observation',
-      id: `obs-${now.toString(36)}-${observationSeq++}-${collector}`,
-      at: now,
-      host,
-      collector,
-      facts: read.facts,
-      evidence: read.evidence,
-      status: statusOf(read.evidence),
-    }))
+    .map(([collector, read]) => {
+      const reason = read.evidence
+        .filter((item) => item.reason !== undefined)
+        .map((item) => `${item.command}: ${item.reason}`)
+        .join('；')
+      return {
+        type: 'observation',
+        id: `obs-${now.toString(36)}-${observationSeq++}-${collector}`,
+        at: now,
+        host,
+        collector,
+        facts: read.facts,
+        evidence: read.evidence,
+        status: statusOf(read.evidence),
+        ...(reason ? { error: reason } : {}),
+      }
+    })
 }
