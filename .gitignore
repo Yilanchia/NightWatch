@@ -1,25 +1,13 @@
-# 依赖
 node_modules/
-vendor/
-
-# 构建产物
 dist/
-build/
 *.tsbuildinfo
 
-# 本地环境
+# DSH's own scratch space (screenshots, downloads); never part of the product.
+.dsh-reef/
+
+# Nightwatch's own home: evidence, reports, audit. Never commit it.
+.nightwatch-home/
+
 .env
-.env.local
-*.local
-
-# 系统/编辑器
-.DS_Store
-Thumbs.db
-desktop.ini
-.vscode/
-.idea/
-
-# 日志与临时文件
-*.log
-*.tmp
-tmp/
+.env.*
+!.env.example

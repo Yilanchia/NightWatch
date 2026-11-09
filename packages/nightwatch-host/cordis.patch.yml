@@ -1,0 +1,25 @@
+# Nightwatch's own host layer.
+#
+# Nightwatch is a standalone defence agent: it mounts the shared guard (one human gate) and the
+# agent, and nothing else. It does not mount another project's life, persona, senses or channel.
+# The only shared thing is @fairy/guard, consumed read-only from its own repository.
+#
+# Paths come from `scripts/nightwatch.mjs`, which owns Nightwatch's home (.nightwatch-home).
+
+- insert:
+    - id: nightwatch-guard
+      name: '@fairy/guard'
+      config:
+        auditPath: !!js process.env.NIGHTWATCH_AUDIT_PATH
+        ask: [destructive, outward, money]
+    - id: nightwatch-agent
+      name: '@nightwatch/agent'
+      config:
+        evidencePath: !!js process.env.NIGHTWATCH_EVIDENCE_PATH
+        databasePath: !!js process.env.NIGHTWATCH_DB_PATH
+        reportDir: !!js process.env.NIGHTWATCH_REPORT_DIR
+        ports: true
+        ssh: true
+        backup: true
+        backupPaths: []
+        backupStaleHours: 36
