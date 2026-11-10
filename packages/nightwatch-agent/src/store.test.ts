@@ -144,3 +144,19 @@ test('a duplicate event id is refused instead of silently overwritten', () => {
   assert.throws(() => new WatchStore(jsonl, db), /重复的事件 ID/)
   cleanup()
 })
+
+test('a read-only store reads while the writer holds the lock', () => {
+  const { jsonl, db, cleanup } = fixture()
+  const writer = new WatchStore(jsonl, db)
+  writer.append(observation())
+  const reader = new WatchStore(jsonl, db, { readOnly: true })
+  try {
+    assert.equal(reader.latestObservations().get('ports')?.id, 'obs-1')
+    assert.throws(() => reader.append(observation()), /read-only/)
+    assert.throws(() => reader.rebuild(), /read-only/)
+  } finally {
+    reader.close()
+    writer.close()
+    cleanup()
+  }
+})

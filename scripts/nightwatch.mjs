@@ -11,6 +11,7 @@
 //   node scripts/nightwatch.mjs baseline  accept the current state as the reference (owner action)
 //   node scripts/nightwatch.mjs timeline  show one fact's reads/findings/resolution over a window
 //   node scripts/nightwatch.mjs health    last run, last success, blind spots and stale collectors
+//   node scripts/nightwatch.mjs daemon    built-in scheduler (foreground; catch-up once, no overlap)
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -118,11 +119,20 @@ async function smoke() {
  * The framework-free core, for the commands that must run with no session and no model.
  * `inspect.js` / `store.js` never import DSH.
  */
-async function openCore(home) {
+async function openCore(home, { readOnly = false } = {}) {
   const core = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'inspect.js')).href)
   const { WatchStore } = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'store.js')).href)
-  const store = new WatchStore(join(home, 'watch.jsonl'), join(home, 'watch.db'))
+  const store = new WatchStore(join(home, 'watch.jsonl'), join(home, 'watch.db'), { readOnly })
   return { core, store }
+}
+
+/** Read-only commands must work while the daemon holds the writer lock; fall back only if no view exists. */
+async function openReadCore(home) {
+  try {
+    return await openCore(home, { readOnly: true })
+  } catch {
+    return openCore(home)
+  }
 }
 
 function coreConfig(home) {
@@ -152,7 +162,7 @@ async function tick(home) {
     if (store.recovery) {
       console.warn(`nightwatch: 日志尾部有半行，已隔离到 ${store.recovery.tornPath}（${store.recovery.tornBytes} 字节），本次从最后一条完整事件继续`)
     }
-    const result = core.runInspection({ store, config: coreConfig(home), trigger: 'tick' })
+    const result = core.runInspection({ store, config: coreConfig(home) }, { trigger: 'tick' })
     console.log(core.formatInspection(result))
     // 0 = every collector read; 2 = something was partial; 1 = at least one collector failed.
     process.exitCode = result.health === 'ok' ? 0 : result.health === 'partial' ? 2 : 1
@@ -173,7 +183,7 @@ async function baseline(home) {
 
 /** One fact's history over a window, from the evidence view. */
 async function timeline(home, key, days) {
-  const { store } = await openCore(home)
+  const { store } = await openReadCore(home)
   try {
     const { timelineText } = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'timeline.js')).href)
     console.log(timelineText(store, key, Number(days ?? 7), Date.now()))
@@ -184,9 +194,51 @@ async function timeline(home, key, days) {
 
 /** When did it last work, what didn't we read, is the data still usable. */
 async function health(home) {
-  const { core, store } = await openCore(home)
+  const { core, store } = await openReadCore(home)
   try {
     console.log(core.formatHealth(core.inspectionHealth(store, coreConfig(home), Date.now())))
+  } finally {
+    store.close()
+  }
+}
+
+/**
+ * Built-in scheduler. Holds the evidence lock for its lifetime (so no second writer can interleave),
+ * catches up a missed run once after a restart, and never overlaps inspections.
+ */
+async function daemon(home, intervalMinutes) {
+  const schedule = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'schedule.js')).href)
+  const time = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'time.js')).href)
+  const minutes = Math.max(1, Number(intervalMinutes ?? process.env.NIGHTWATCH_INTERVAL_MINUTES ?? 1440))
+  const intervalMs = minutes * 60_000
+  const { core, store } = await openCore(home)
+  let stopping = false
+  const stop = () => {
+    stopping = true
+  }
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const runOnce = () => {
+    try {
+      const result = core.runInspection({ store, config: coreConfig(home) }, { trigger: 'scheduler' })
+      console.log(core.formatInspection(result))
+    } catch (error) {
+      console.error(`nightwatch: inspection failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    const next = schedule.nextRunAt(store.lastRun()?.at, Date.now(), intervalMs)
+    console.log(`nightwatch: next run ${time.localStamp(next)}（间隔 ${minutes} 分钟）`)
+  }
+  try {
+    console.log(`nightwatch: daemon watching ${home}, interval ${minutes} min`)
+    if (schedule.isDue(store.lastRun()?.at, Date.now(), intervalMs)) runOnce()
+    while (!stopping) {
+      const next = schedule.nextRunAt(store.lastRun()?.at, Date.now(), intervalMs)
+      const wait = Math.max(1000, next - Date.now())
+      await sleep(Math.min(wait, 60_000))
+      if (!stopping && schedule.isDue(store.lastRun()?.at, Date.now(), intervalMs)) runOnce()
+    }
+    console.log('nightwatch: daemon stopped')
   } finally {
     store.close()
   }
@@ -222,6 +274,10 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await health(home)
+  } else if (command === 'daemon') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await daemon(home, process.argv[4])
   } else {
     throw new Error(`unknown command ${command}`)
   }

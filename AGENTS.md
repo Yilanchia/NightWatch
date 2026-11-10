@@ -28,11 +28,11 @@
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
-| 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，systemd 每日 03:30；见 `docs/服务器验收-2026-11-10.md` |
+| 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-10）：`pnpm test` **53 通过**；`node scripts/nightwatch.mjs smoke` 通过；
-`tick` / `health` / `timeline` 在临时 home 与验收机上跑通；`inspect.js` 依赖闭包无 `@deepseek-ai`；
-验收机已记录基线、每日定时（systemd `Persistent=true`）开始 7 天观察；恢复语义（fixed / invalid）有测试覆盖。
+最近验证（2026-11-10）：`pnpm test` **58 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+`tick` / `health` / `timeline` / `daemon` 在临时 home 与验收机上跑通；`inspect.js` 依赖闭包无 `@deepseek-ai`；
+验收机已从 systemd timer 切到内置 `daemon`（单实例写锁、重启补跑一次），开始 7 天观察。
 
 ## 代码地图
 
@@ -70,12 +70,14 @@
 
 ## 下一步顺序（观察期内继续开发）
 
-1. **7 天观察进行中**（2026-11-10 → 11-17）：验收机每日 03:30 自动 `tick`；每天看 `health`、
-   `watch-reports/` 与 journal，记录成功/失败、盲区、恢复与复发。不要停 timer、不要删 `watch.jsonl`。
+1. **7 天观察进行中**（2026-11-10 → 11-17）：验收机的 `nightwatch-daemon.service` 每 24h 自动巡检；
+   每天看 `health`、`watch-reports/` 与 `journalctl -u nightwatch-daemon`，记录成功/失败、盲区、恢复与复发。
+   不要停 daemon、不要删 `watch.jsonl`。
 2. **观察期内开发**：
    - ✅ **恢复语义**：端口/公钥被新基线吸收 → `invalid`（报告“已失效”）；监听范围缩回/端口关闭 → `fixed`。
    - ✅ **配置统一**：CLI 与宿主共用 `NIGHTWATCH_*` 环境变量（见 `packages/nightwatch-host/cordis.patch.yml`）。
-   - **内置调度**：把 systemd timer 的职责收进 `nightwatch` 自己的常驻入口（单实例锁、补跑、运行记录）。
+   - ✅ **内置调度**：`nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；验收机已切换。
+     只读命令 `health` / `timeline` 走只读视图，可在 daemon 运行时用；`tick` / `baseline` 需要写锁。
 3. **M0 宿主落地**：按 `m0-host-research.md` §7 的显式组合替换 web profile，补启动自检。
 4. M1 多端（文档 `Nightwatch-多端智能防护网设计.md`）等单机 7 天验收通过再开；osquery / Sigma 继续后置。
 
@@ -103,16 +105,17 @@ node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线（有�
 node scripts/nightwatch.mjs tick <home>       # 无模型巡检：0 正常 / 2 部分 / 1 失败
 node scripts/nightwatch.mjs health <home>     # 最近成功、盲区、数据过期、未运行项
 node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实的时间线
+node scripts/nightwatch.mjs daemon <home> [minutes]       # 内置调度（前台；单实例写锁、补跑一次）
 node scripts/nightwatch.mjs web
 node scripts/nightwatch.mjs dump
 ```
 
 ## 交接时的状态
 
-- 代码、测试（53）、smoke 都是好的；`inspect.ts` / `timeline.ts` / `time.ts` 不依赖 DSH，`tick` / `health` 可无模型运行。
-- P0 全部修完（1–6）；`run` 记录、健康查询、基线完整性、退出码、恢复语义（fixed/invalid）、配置统一已落地。
-- 首台验收机已上线并开始 7 天观察（2026-11-10 → 11-17）。
-- 下一步：内置调度（常驻入口 + 单实例锁 + 补跑）→ M0 宿主显式组合；别先接 osquery / 多端。
+- 代码、测试（58）、smoke 都是好的；`inspect.ts` / `timeline.ts` / `time.ts` 不依赖 DSH，`tick` / `health` / `daemon` 可无模型运行。
+- P0 全部修完（1–6）；`run` 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度已落地。
+- 首台验收机已切到内置 `daemon` 开始 7 天观察（2026-11-10 → 11-17）；只读 health/timeline 可在 daemon 运行时用。
+- 下一步：M0 宿主显式组合与启动自检；7 天验收通过后再评估多端；别先接 osquery。
 
 ---
 

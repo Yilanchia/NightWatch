@@ -130,21 +130,38 @@ CREATE INDEX IF NOT EXISTS findings_by_status ON findings (status);
 CREATE INDEX IF NOT EXISTS observations_by_collector ON observations (collector, at);
 `
 
+export interface StoreOptions {
+  /**
+   * Open without the writer lock and without rebuilding. Used by `health` / `timeline` while the
+   * daemon holds the lock: readers see the daemon's live SQLite view and never touch the log.
+   */
+  readonly readOnly?: boolean
+}
+
 export class WatchStore {
   private db!: DatabaseSync
   private readonly lockPath: string
+  private readonly readOnly: boolean
   private lockFd: number | undefined
+  private locked = false
   private readonly ids = new Set<string>()
   /** Set when opening found a half-written tail; kept so callers can say so instead of hiding it. */
-  readonly recovery: Recovery | undefined
+  readonly recovery: Recovery | undefined = undefined
 
   constructor(
     private readonly jsonlPath: string,
     private readonly dbPath: string,
+    options: StoreOptions = {},
   ) {
     mkdirSync(dirname(jsonlPath), { recursive: true })
     mkdirSync(dirname(dbPath), { recursive: true })
+    this.readOnly = options.readOnly === true
     this.lockPath = `${jsonlPath}.lock`
+    if (this.readOnly) {
+      // The daemon owns the log. Reading its view must not take the writer lock or replay the log.
+      this.db = new DatabaseSync(dbPath, { readOnly: true })
+      return
+    }
     this.acquireLock()
     let db: DatabaseSync | undefined
     try {
@@ -170,6 +187,7 @@ export class WatchStore {
       try {
         this.lockFd = openSync(this.lockPath, 'wx')
         writeSync(this.lockFd, String(process.pid))
+        this.locked = true
         return
       } catch (error) {
         if (!existsSync(this.lockPath)) throw error
@@ -198,7 +216,9 @@ export class WatchStore {
       closeSync(this.lockFd)
       this.lockFd = undefined
     }
-    if (existsSync(this.lockPath)) unlinkSync(this.lockPath)
+    // A read-only store never owned the lock; deleting it would break the running daemon.
+    if (this.locked && existsSync(this.lockPath)) unlinkSync(this.lockPath)
+    this.locked = false
   }
 
   /**
@@ -248,6 +268,7 @@ export class WatchStore {
   }
 
   append(event: WatchEvent): void {
+    if (this.readOnly) throw new Error('read-only store: cannot append to the evidence log')
     if (this.ids.has(event.id)) throw new Error(`事件 ID 重复：${event.id}（${event.type}）；日志已损坏，拒绝覆盖。`)
     this.ids.add(event.id)
     appendFileSync(this.jsonlPath, `${JSON.stringify(event)}\n`, 'utf8')
@@ -256,6 +277,7 @@ export class WatchStore {
 
   /** Drops the view and replays the log. Always called on open, so the view can never drift. */
   rebuild(): void {
+    if (this.readOnly) throw new Error('read-only store: cannot rebuild the view')
     this.db.exec(
       'DELETE FROM observations; DELETE FROM findings; DELETE FROM finding_updates; DELETE FROM baselines; DELETE FROM reports; DELETE FROM proposals; DELETE FROM actions; DELETE FROM runs;',
     )

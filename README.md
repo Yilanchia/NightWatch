@@ -23,7 +23,7 @@
 
 ## 现状（2026-11-10，评审后 + 首台验收机）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`。
 
 **首台 Linux 验收机**已上线（`NODE_A_IP`，Ubuntu 22.04），systemd 每日 03:30 巡检，7 天观察从 2026-11-10 开始。部署与验收点见 [docs/服务器验收-2026-11-10.md](docs/服务器验收-2026-11-10.md)。
 
@@ -97,6 +97,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs tick <home>` | 跑一轮完整巡检，写当天的日报；`0` 正常 / `2` 部分未读全 / `1` 失败 |
 | `node scripts/nightwatch.mjs health <home>` | 最近一轮 / 最近全绿、盲区、数据过期、未运行项 |
 | `node scripts/nightwatch.mjs timeline <home> <key> [days]` | 回放一个事实的时间线（默认 7 天） |
+| `node scripts/nightwatch.mjs daemon <home> [minutes]` | 内置调度：前台常驻，单实例写锁，重启补跑一次 |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
 
 ## 代码结构
