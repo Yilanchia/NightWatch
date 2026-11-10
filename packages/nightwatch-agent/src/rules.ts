@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+﻿import { createHash } from 'node:crypto'
 import { observationStatus } from './health.js'
 import type { Baseline, Fact, Finding, Observation, Severity } from './types.js'
 
@@ -28,7 +28,7 @@ function addressOf(entry: string): string {
 }
 
 /** The widest address a port fact names; `listenFacts` may merge several into one value. */
-function widestExposure(fact: Fact): number {
+export function factExposure(fact: Fact): number {
   const entries = fact.value.split(' | ')
   if (entries.length === 0) return 0
   return Math.max(...entries.map((entry) => exposureRank(addressOf(entry))))
@@ -103,7 +103,7 @@ function portFindings(observation: Observation, before: readonly Fact[], at: num
   }
   for (const { before: previous, after: currentFact } of changed) {
     // Same port, wider reach: 127.0.0.1:3306 -> 0.0.0.0:3306 is the change that matters.
-    if (widestExposure(currentFact) <= widestExposure(previous)) continue
+    if (factExposure(currentFact) <= factExposure(previous)) continue
     const port = Number(currentFact.key.split(':')[1])
     const risky = Number.isInteger(port) && HIGH_RISK_PORTS.has(port)
     findings.push(

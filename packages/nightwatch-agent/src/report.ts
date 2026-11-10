@@ -24,6 +24,8 @@ export interface ReportInput {
   readonly openFindings?: readonly Finding[]
   /** Findings confirmed gone today, after a successful read. */
   readonly resolved?: readonly Finding[]
+  /** Findings absorbed by a new baseline: no longer deviations, but not repairs either. */
+  readonly invalidated?: readonly Finding[]
   /** Collectors that did not read fully, e.g. "ports（读取失败）". */
   readonly blindSpots?: readonly string[]
   /** Things the report must say it could not judge, e.g. no baseline for ports. */
@@ -65,6 +67,8 @@ export function renderReport(input: ReportInput): string {
   if (open.length > 0) sentence.push(`未关闭 ${open.length} 条（高危 ${high} 条，中危 ${medium} 条）`)
   const resolvedCount = (input.resolved ?? []).length
   if (resolvedCount > 0) sentence.push(`已恢复 ${resolvedCount} 条`)
+  const invalidatedCount = (input.invalidated ?? []).length
+  if (invalidatedCount > 0) sentence.push(`已失效（纳入基线）${invalidatedCount} 条`)
   if (blindSpots.length > 0) sentence.push(`有 ${blindSpots.length} 项没读全：${blindSpots.join('、')}`)
   for (const note of notes) sentence.push(note)
   if (sentence.length === 0) {
@@ -88,6 +92,15 @@ export function renderReport(input: ReportInput): string {
     lines.push('')
     for (const finding of input.resolved ?? []) {
       lines.push(`- **[${finding.severity}] ${finding.title}**（首次 ${localStamp(finding.firstSeen ?? finding.at)}，恢复 ${localStamp(finding.resolvedAt ?? finding.at)}）`)
+    }
+    lines.push('')
+  }
+
+  if ((input.invalidated ?? []).length > 0) {
+    lines.push('## 已失效（纳入新基线）')
+    lines.push('')
+    for (const finding of input.invalidated ?? []) {
+      lines.push(`- **[${finding.severity}] ${finding.title}**（首次 ${localStamp(finding.firstSeen ?? finding.at)}，纳入基线 ${localStamp(finding.resolvedAt ?? finding.at)}）`)
     }
     lines.push('')
   }

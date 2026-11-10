@@ -3,7 +3,7 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { collectAll, type Runner } from './collect.js'
 import { observationStatus, overallStatus, statusLabel } from './health.js'
-import { diffFacts, diffSnapshot } from './rules.js'
+import { diffFacts, diffSnapshot, factExposure } from './rules.js'
 import { renderReport } from './report.js'
 import type { WatchStore } from './store.js'
 import { localDay, localStamp } from './time.js'
@@ -59,6 +59,8 @@ export interface InspectionResult {
   readonly openFindings: readonly Finding[]
   /** Findings confirmed gone in this run (only after a successful read). */
   readonly resolved: readonly Finding[]
+  /** Findings that stopped differing from the baseline because the owner accepted a new baseline. */
+  readonly invalidated: readonly Finding[]
   readonly reportPath: string
   readonly reportDay: string
 }
@@ -114,22 +116,49 @@ function readOk(observations: readonly Observation[], kind: string): boolean {
   return observation !== undefined && observationStatus(observation) === 'ok'
 }
 
-/** Still true: the rule restated it, or the same fact is still in the latest read and still bad. */
-function stillPresent(finding: Finding, currentKeys: ReadonlySet<string>, latest: Map<string, Observation>): boolean {
-  if (currentKeys.has(finding.key)) return true
+type Verdict = 'present' | 'fixed' | 'invalid'
+
+/**
+ * What an open finding looks like now.
+ * - present: the rule restated it, or the bad fact is still there;
+ * - fixed: the condition is gone (port closed, key removed, setting changed);
+ * - invalid: the condition stopped differing from the baseline because the owner accepted a new
+ *   baseline. That is not a repair and must not be reported as one.
+ */
+function classifyFinding(
+  finding: Finding,
+  currentKeys: ReadonlySet<string>,
+  latest: Map<string, Observation>,
+  baseline: Baseline | undefined,
+): Verdict {
+  if (currentKeys.has(finding.key)) return 'present'
   const collector = collectorOf(finding.kind)
   const observation = collector ? latest.get(collector) : undefined
-  if (!observation) return false
+  if (!observation) return 'present'
   const fact = observation.facts.find((candidate) => candidate.key === finding.key)
-  if (!fact) return false
+  const baselineFact = baseline?.facts.find((candidate) => candidate.key === finding.key)
+
   switch (finding.kind) {
     case 'ssh_password_authentication':
     case 'ssh_empty_password':
-      return fact.value.toLowerCase() === 'yes'
+      if (!fact) return 'fixed'
+      return fact.value.toLowerCase() === 'yes' ? 'present' : 'fixed'
     case 'ssh_root_login':
-      return /^yes$/i.test(fact.value.trim())
+      if (!fact) return 'fixed'
+      return /^yes$/i.test(fact.value.trim()) ? 'present' : 'fixed'
+    case 'listen_scope_expanded':
+      if (!fact) return 'fixed' // the port is gone
+      if (!baselineFact) return 'present'
+      return factExposure(fact) > factExposure(baselineFact) ? 'present' : 'fixed'
+    case 'new_listen_port':
+      if (!fact) return 'fixed'
+      return baselineFact ? 'invalid' : 'present'
+    case 'ssh_authorized_key_added':
+      if (!fact) return 'fixed'
+      return baselineFact ? 'invalid' : 'present'
     default:
-      return true
+      // backup_*: the condition is the fact itself; if the rule did not restate it, it is gone.
+      return 'fixed'
   }
 }
 
@@ -170,11 +199,13 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
     fresh.push(recorded)
   }
 
-  // Sustained or resolved: only a successful read of that collector may update or close a finding.
+  // Sustained, repaired, or absorbed by a new baseline. Only a successful read may decide.
   const resolved: Finding[] = []
+  const invalidated: Finding[] = []
   for (const open of openBefore) {
     if (!readOk(observations, open.kind)) continue
-    if (currentKeys.has(open.key) || stillPresent(open, currentKeys, latest)) {
+    const verdict = classifyFinding(open, currentKeys, latest, baseline)
+    if (verdict === 'present') {
       ctx.store.append({
         type: 'finding-update',
         id: `fupd-${now.toString(36)}-${updateSeq++}`,
@@ -183,18 +214,20 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
         lastSeen: now,
         lastChecked: now,
       })
-    } else {
-      ctx.store.append({
-        type: 'finding-update',
-        id: `fupd-${now.toString(36)}-${updateSeq++}`,
-        at: now,
-        findingId: open.id,
-        status: 'fixed',
-        lastChecked: now,
-        resolvedAt: now,
-      })
-      resolved.push({ ...open, status: 'fixed', lastChecked: now, resolvedAt: now })
+      continue
     }
+    ctx.store.append({
+      type: 'finding-update',
+      id: `fupd-${now.toString(36)}-${updateSeq++}`,
+      at: now,
+      findingId: open.id,
+      status: verdict,
+      lastChecked: now,
+      resolvedAt: now,
+    })
+    const closed: Finding = { ...open, status: verdict, lastChecked: now, resolvedAt: now }
+    if (verdict === 'fixed') resolved.push(closed)
+    else invalidated.push(closed)
   }
 
   const host = observations[0]?.host ?? hostname()
@@ -213,6 +246,7 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
     findings: fresh,
     openFindings,
     ...(resolved.length > 0 ? { resolved } : {}),
+    ...(invalidated.length > 0 ? { invalidated } : {}),
     blindSpots,
     notes,
   })
@@ -247,6 +281,7 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
     newFindings: fresh,
     openFindings,
     resolved,
+    invalidated,
     reportPath,
     reportDay: day,
   }
@@ -260,6 +295,7 @@ export function formatInspection(result: InspectionResult): string {
     `未关闭 ${result.openFindings.length} 条`,
   ]
   if (result.resolved.length > 0) parts.push(`已恢复 ${result.resolved.length} 条`)
+  if (result.invalidated.length > 0) parts.push(`已失效（纳入基线）${result.invalidated.length} 条`)
   if (result.blindSpots.length > 0) parts.push(`盲区 ${result.blindSpots.join('、')}`)
   if (result.notes.length > 0) parts.push(result.notes.join('；'))
   parts.push(`日报 ${result.reportPath}`)

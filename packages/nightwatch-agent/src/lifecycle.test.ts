@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Runner } from './collect.js'
-import { runInspection } from './inspect.js'
+import { runInspection, takeBaseline } from './inspect.js'
 import { WatchStore } from './store.js'
 import type { WatchConfig } from './tools.js'
 import type { Baseline } from './types.js'
@@ -164,6 +164,95 @@ test('a failed collector leaves an open risk open instead of resolving it', () =
     assert.equal(blind.resolved.length, 0)
     assert.equal(blind.openFindings.length, 1)
     assert.equal(context.store.findings('key = ?', 'tcp:3306')[0]!.status, 'candidate')
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a port absorbed by a new baseline becomes invalid, not fixed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-absorb-'))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'),
+    databasePath: join(dir, 'watch.db'),
+    reportDir: join(dir, 'reports'),
+    ports: true,
+    ssh: false,
+    backup: false,
+    backupPaths: [],
+    backupStaleHours: 36,
+  }
+  const runner: Runner = (command) =>
+    command === 'ss' ? { exit: 0, stdout: PORTS_WITH_3306, stderr: '' } : { exit: 127, stdout: '', stderr: '' }
+  let clock = t1
+  const context = { store, config, platform: 'linux' as const, now: () => clock, runner }
+  try {
+    store.append({
+      type: 'baseline',
+      id: 'base-1',
+      at: t1,
+      host: 'host',
+      facts: [{ kind: 'listen_port', key: 'tcp:22', value: '0.0.0.0:22', detail: '0.0.0.0:22' }],
+      observationIds: [],
+    })
+    const first = runInspection(context, { now: t1 })
+    const id = first.newFindings[0]!.id
+    assert.equal(first.newFindings[0]!.kind, 'new_listen_port')
+
+    clock = t1 + hour
+    takeBaseline(context)
+
+    clock = t1 + 2 * hour
+    const second = runInspection(context, { now: clock })
+    assert.equal(second.invalidated.length, 1)
+    assert.equal(second.resolved.length, 0)
+    assert.equal(second.openFindings.length, 0)
+    assert.equal(store.findings('id = ?', id)[0]!.status, 'invalid')
+    assert.match(readFileSync(second.reportPath, 'utf8'), /已失效（纳入新基线）/)
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a listening scope that narrows back is fixed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-narrow-'))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'),
+    databasePath: join(dir, 'watch.db'),
+    reportDir: join(dir, 'reports'),
+    ports: true,
+    ssh: false,
+    backup: false,
+    backupPaths: [],
+    backupStaleHours: 36,
+  }
+  let output = [PORTS, 'LISTEN 0 128 0.0.0.0:3306 0.0.0.0:* users:(("mysqld",pid=2,fd=20))'].join('\n')
+  const runner: Runner = (command) =>
+    command === 'ss' ? { exit: 0, stdout: output, stderr: '' } : { exit: 127, stdout: '', stderr: '' }
+  const context = { store, config, platform: 'linux' as const, now: () => t1, runner }
+  try {
+    store.append({
+      type: 'baseline',
+      id: 'base-1',
+      at: t1,
+      host: 'host',
+      facts: [
+        { kind: 'listen_port', key: 'tcp:22', value: '0.0.0.0:22', detail: '0.0.0.0:22' },
+        { kind: 'listen_port', key: 'tcp:3306', value: '127.0.0.1:3306', detail: '127.0.0.1:3306' },
+      ],
+      observationIds: [],
+    })
+    const wide = runInspection(context, { now: t1 })
+    assert.equal(wide.newFindings[0]!.kind, 'listen_scope_expanded')
+
+    output = [PORTS, 'LISTEN 0 128 127.0.0.1:3306 0.0.0.0:* users:(("mysqld",pid=2,fd=20))'].join('\n')
+    const narrow = runInspection(context, { now: t1 + hour })
+    assert.equal(narrow.resolved.length, 1)
+    assert.equal(narrow.openFindings.length, 0)
+    assert.equal(store.findings("kind = 'listen_scope_expanded'")[0]!.status, 'fixed')
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })

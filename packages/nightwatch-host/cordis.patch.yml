@@ -4,7 +4,9 @@
 # agent, and nothing else. It does not mount another project's life, persona, senses or channel.
 # The only shared thing is @fairy/guard, consumed read-only from its own repository.
 #
-# Paths come from `scripts/nightwatch.mjs`, which owns Nightwatch's home (.nightwatch-home).
+# Paths and switches come from `scripts/nightwatch.mjs`, which owns Nightwatch's home
+# (.nightwatch-home). The CLI (tick/health/timeline) reads the same environment variables, so both
+# entry points watch the same machine with the same configuration.
 
 - insert:
     - id: nightwatch-guard
@@ -18,11 +20,11 @@
         evidencePath: !!js process.env.NIGHTWATCH_EVIDENCE_PATH
         databasePath: !!js process.env.NIGHTWATCH_DB_PATH
         reportDir: !!js process.env.NIGHTWATCH_REPORT_DIR
-        ports: true
-        ssh: true
-        backup: true
-        backupPaths: []
-        backupStaleHours: 36
-        observationValidHours: 26
+        ports: !!js process.env.NIGHTWATCH_PORTS !== '0'
+        ssh: !!js process.env.NIGHTWATCH_SSH !== '0'
+        backup: !!js process.env.NIGHTWATCH_BACKUP !== '0'
+        backupPaths: !!js (process.env.NIGHTWATCH_BACKUP_PATHS ?? '').split(';').filter(Boolean)
+        backupStaleHours: !!js Number(process.env.NIGHTWATCH_BACKUP_STALE_HOURS ?? 36)
+        observationValidHours: !!js Number(process.env.NIGHTWATCH_VALID_HOURS ?? 26)
         # Off by default: the executor is only registered when the owner explicitly enables it.
-        applyFix: false
+        applyFix: !!js process.env.NIGHTWATCH_APPLY_FIX === '1'
