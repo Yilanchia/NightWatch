@@ -21,9 +21,11 @@
 
 依赖方向单向：Nightwatch 依赖 guard，guard 不知道 Nightwatch 存在。
 
-## 现状（2026-11-09，评审后）
+## 现状（2026-11-10，评审后 + 首台验收机）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；以及**时间线** `watch_timeline` / `nightwatch timeline`。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`。
+
+**首台 Linux 验收机**已上线（`NODE_A_IP`，Ubuntu 22.04），systemd 每日 03:30 巡检，7 天观察从 2026-11-10 开始。部署与验收点见 [docs/服务器验收-2026-11-10.md](docs/服务器验收-2026-11-10.md)。
 
 **已知问题**：
 
@@ -34,7 +36,7 @@
 5. ~~崩溃尾行粘连~~：已修。半行隔离到 `.torn-*`，中间损坏和重复 ID 直接报错，单写者锁；
 6. ~~历史日报混入当前~~：已修。按目标日期取当时的观测/基线/发现。
 
-所以现在它是**可手动调用、也能无模型跑一轮闭环的原型**；还不是“常驻守夜闭环”。完整评审见 [项目评审-2026-11-09.md](项目评审-2026-11-09.md)，改造方案见 [docs/DSH改造与后续实施方案.md](docs/DSH改造与后续实施方案.md)，本轮记录见 [docs/2026-11-09-工作记录.md](docs/2026-11-09-工作记录.md)。
+所以现在它是**可无模型跑一轮、有健康记录与时间线的闭环原型**；还不是“常驻守夜闭环”（内置调度与恢复语义仍在做）。完整评审见 [项目评审-2026-11-09.md](项目评审-2026-11-09.md)，改造方案见 [docs/DSH改造与后续实施方案.md](docs/DSH改造与后续实施方案.md)，本轮记录见 [docs/2026-11-09-工作记录.md](docs/2026-11-09-工作记录.md)。
 
 ## 跑起来
 
@@ -47,7 +49,9 @@ node scripts/nightwatch.mjs smoke
 
 # 无模型巡检（不需要 DSH、不需要 API key）
 node scripts/nightwatch.mjs baseline nightwatch-home
-node scripts/nightwatch.mjs tick nightwatch-home
+node scripts/nightwatch.mjs tick nightwatch-home      # 0 正常 / 2 部分 / 1 失败
+node scripts/nightwatch.mjs health nightwatch-home
+node scripts/nightwatch.mjs timeline nightwatch-home tcp:22
 
 # 常驻：自己的 home、自己的端口
 node scripts/nightwatch.mjs web
@@ -79,6 +83,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `watch_diff` | 再采一次，和基线比，记新发现 |
 | `watch_report` | 写某天的 Markdown 日报 |
 | `watch_propose_fix` | 对一条发现产出修复计划（改哪行、风险、回滚、验证） |
+| `watch_health` | 最近一轮 / 最近全绿、盲区、数据过期、未运行项 |
 | `watch_timeline` | 按 key + 时间窗回放：读到 / 发现 / 仍存在 / 已恢复，缺口照实说 |
 | `watch_apply_fix` | 应用计划（仅三种 SSH 改行；guard 判 destructive；备份/校验/回滚；不 reload）。**默认不注册**，`applyFix: true` 才出现 |
 
@@ -88,8 +93,9 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 
 | 命令 | 做什么 |
 |---|---|
-| `node scripts/nightwatch.mjs baseline <home>` | 采一次并记为基线——明确的主人的动作，不会自动重设 |
-| `node scripts/nightwatch.mjs tick <home>` | 跑一轮完整巡检，写当天的日报；采集失败时退出码非 0 |
+| `node scripts/nightwatch.mjs baseline <home>` | 采一次并记为基线——明确的主人的动作；有盲区时拒绝，不存半份基线 |
+| `node scripts/nightwatch.mjs tick <home>` | 跑一轮完整巡检，写当天的日报；`0` 正常 / `2` 部分未读全 / `1` 失败 |
+| `node scripts/nightwatch.mjs health <home>` | 最近一轮 / 最近全绿、盲区、数据过期、未运行项 |
 | `node scripts/nightwatch.mjs timeline <home> <key> [days]` | 回放一个事实的时间线（默认 7 天） |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
 

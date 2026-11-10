@@ -160,7 +160,20 @@ export interface TimelinePoint {
   readonly detail: string
 }
 
-export type WatchEvent = Observation | Finding | FindingUpdate | Baseline | ReportEvent | FixProposal | FixAction
+/** One inspection pass, recorded so the owner can ask "when did it last work". */
+export interface RunEvent {
+  readonly type: 'run'
+  readonly id: string
+  readonly at: number
+  /** What asked for the run: tick, report, diff, baseline, service. */
+  readonly trigger: string
+  readonly health: ObservationStatus
+  readonly blindSpots: readonly string[]
+  readonly notes: readonly string[]
+  readonly reportPath?: string
+}
+
+export type WatchEvent = Observation | Finding | FindingUpdate | RunEvent | Baseline | ReportEvent | FixProposal | FixAction
 
 /** What actually happened when a proposal was applied. Kept even when it failed. */
 export interface FixAction {

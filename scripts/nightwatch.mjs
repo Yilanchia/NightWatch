@@ -10,6 +10,7 @@
 //   node scripts/nightwatch.mjs tick    run one full inspection with no session and no model
 //   node scripts/nightwatch.mjs baseline  accept the current state as the reference (owner action)
 //   node scripts/nightwatch.mjs timeline  show one fact's reads/findings/resolution over a window
+//   node scripts/nightwatch.mjs health    last run, last success, blind spots and stale collectors
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -153,7 +154,8 @@ async function tick(home) {
     }
     const result = core.runInspection({ store, config: coreConfig(home), trigger: 'tick' })
     console.log(core.formatInspection(result))
-    if (result.health === 'failed') process.exitCode = 1
+    // 0 = every collector read; 2 = something was partial; 1 = at least one collector failed.
+    process.exitCode = result.health === 'ok' ? 0 : result.health === 'partial' ? 2 : 1
   } finally {
     store.close()
   }
@@ -175,6 +177,16 @@ async function timeline(home, key, days) {
   try {
     const { timelineText } = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'timeline.js')).href)
     console.log(timelineText(store, key, Number(days ?? 7), Date.now()))
+  } finally {
+    store.close()
+  }
+}
+
+/** When did it last work, what didn't we read, is the data still usable. */
+async function health(home) {
+  const { core, store } = await openCore(home)
+  try {
+    console.log(core.formatHealth(core.inspectionHealth(store, coreConfig(home), Date.now())))
   } finally {
     store.close()
   }
@@ -206,6 +218,10 @@ try {
     const key = process.argv[4]
     if (!key) throw new Error('timeline 需要 key，例如 tcp:3306 或 ssh:passwordauthentication')
     await timeline(home, key, process.argv[5])
+  } else if (command === 'health') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await health(home)
   } else {
     throw new Error(`unknown command ${command}`)
   }

@@ -28,11 +28,11 @@
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
+| 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，systemd 每日 03:30；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-09）：`pnpm test` **49 通过**；`node scripts/nightwatch.mjs smoke` 通过；
-`node scripts/nightwatch.mjs tick <home>` 在临时 home 里跑通完整巡检（无 DSH、无模型），
-`dist/inspect.js` 的依赖闭包里没有任何 `@deepseek-ai` 引用；实测覆盖“新增 → 持续 → 恢复 → 复发”、
-半行日志隔离、双写者拒绝、时间线回放。
+最近验证（2026-11-10）：`pnpm test` **51 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+`tick` / `health` / `timeline` 在临时 home 与验收机上跑通；`inspect.js` 依赖闭包无 `@deepseek-ai`；
+验收机已记录基线、每日定时（systemd `Persistent=true`）开始 7 天观察。
 
 ## 代码地图
 
@@ -46,6 +46,7 @@
 | `src/rules.ts` | 基线差分与规则，finding 带 `observationId` |
 | `src/report.ts` | 日报 Markdown 渲染（未关闭风险 / 已恢复 / 采集健康 / 盲区 / 原因） |
 | `src/timeline.ts` | `watch_timeline`：按 key + 时间窗回放读到/发现/仍存在/已恢复 |
+| `src/time.ts` | 本地时间格式化（报告/时间线/健康统一用主机本地时间，不是 UTC） |
 | `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
 | `src/propose.ts` | 修复计划（改哪行、风险、回滚、验证） |
 | `src/apply.ts` | 应用计划（仅三种 SSH 改行；备份/校验/回滚） |
@@ -67,14 +68,16 @@
 6. ✅ 顺手修：历史日报按目标日期取当时的观测/基线/发现；无基线不再把当前端口报成“新端口”；
    `apply` 检查 `executable`，回滚失败标为 `failed` 而不是 `rolled-back`。
 
-## 下一步顺序（以 `docs/DSH改造与后续实施方案.md` 为准）
+## 下一步顺序（观察期内继续开发）
 
-1. **M0 落地**：DSH 已证明能承载最小宿主（见 `docs/m0-host-research.md`）——6 行显式组合、
-   无 Session/llm/API key、工具面恰好 `watch_*`。下一步按报告 §7 的 YAML 把宿主从
-   `--from-default-profile web` 换成显式组合，并补启动自检。
-2. **M2**：持久化巡检任务（cron/systemd / 常驻入口）、`getHealth()`（最近成功 / 下次巡检 / 盲区，
-   数据源已具备：`observations.status`、`lastOkAt`）。
-3. 之后才是 osquery / Sigma / 多机；eBPF 和社区同步继续后置；7 天验收在 M2 之后开始。
+1. **7 天观察进行中**（2026-11-10 → 11-17）：验收机每日 03:30 自动 `tick`；每天看 `health`、
+   `watch-reports/` 与 journal，记录成功/失败、盲区、恢复与复发。不要停 timer、不要删 `watch.jsonl`。
+2. **观察期内开发**：
+   - **恢复语义**：新基线吸收的端口/公钥标 `invalid`（已接受）而不是永远不关；监听范围缩回要 `fixed`。
+   - **配置统一**：CLI 与宿主共用一套配置（当前 CLI 读 env、宿主读 `cordis.patch.yml`）。
+   - **内置调度**：把 systemd timer 的职责收进 `nightwatch` 自己的常驻入口（单实例锁、补跑、运行记录）。
+3. **M0 宿主落地**：按 `m0-host-research.md` §7 的显式组合替换 web profile，补启动自检。
+4. M1 多端（文档 `Nightwatch-多端智能防护网设计.md`）等单机 7 天验收通过再开；osquery / Sigma 继续后置。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
 风险恢复与复发都能解释；删 SQLite 后结果一致；巡检不需要云模型或系统写权限。
@@ -96,8 +99,9 @@ pnpm install
 npx tsc -b
 pnpm test
 node scripts/nightwatch.mjs smoke
-node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线
-node scripts/nightwatch.mjs tick <home>       # 无模型：跑一轮完整巡检
+node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线（有盲区时拒绝）
+node scripts/nightwatch.mjs tick <home>       # 无模型巡检：0 正常 / 2 部分 / 1 失败
+node scripts/nightwatch.mjs health <home>     # 最近成功、盲区、数据过期、未运行项
 node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实的时间线
 node scripts/nightwatch.mjs web
 node scripts/nightwatch.mjs dump
@@ -105,9 +109,10 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（49）、smoke 都是好的；巡检核心 `inspect.ts` / `timeline.ts` 不依赖 DSH，`tick` 可无模型运行。
-- P0 全部修完（1–6）；还差 M0 宿主显式组合落地、M2 常驻调度与健康查询、7 天验收。
-- 下一步：按 `m0-host-research.md` §7 落 M0 显式组合（含启动自检），再做 M2；别先接 osquery。
+- 代码、测试（51）、smoke 都是好的；`inspect.ts` / `timeline.ts` / `time.ts` 不依赖 DSH，`tick` / `health` 可无模型运行。
+- P0 全部修完（1–6）；`run` 记录、健康查询、基线完整性、退出码已落地；时间统一为主机本地时间。
+- 首台验收机已上线并开始 7 天观察（2026-11-10 → 11-17）。
+- 下一步：观察期内做恢复语义、配置统一、内置调度；M0 宿主显式组合随后；别先接 osquery / 多端。
 
 ---
 

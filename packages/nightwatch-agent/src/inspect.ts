@@ -5,7 +5,9 @@ import { collectAll, type Runner } from './collect.js'
 import { observationStatus, overallStatus, statusLabel } from './health.js'
 import { diffFacts, diffSnapshot } from './rules.js'
 import { renderReport } from './report.js'
-import type { Baseline, Fact, Finding, Observation, ObservationStatus } from './types.js'
+import type { WatchStore } from './store.js'
+import { localDay, localStamp } from './time.js'
+import type { Baseline, Fact, Finding, Observation, ObservationStatus, RunEvent } from './types.js'
 import type { WatchConfig, WatchContext } from './tools.js'
 
 /**
@@ -20,11 +22,7 @@ import type { WatchConfig, WatchContext } from './tools.js'
 let updateSeq = 0
 let eventSeq = 0
 
-export function localDay(at: number): string {
-  const date = new Date(at)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
+export { localDay }
 
 function collectorConfig(config: WatchConfig) {
   return {
@@ -224,11 +222,24 @@ export function runInspection(ctx: WatchContext, options: InspectionOptions = {}
   writeFileSync(reportPath, text, 'utf8')
   ctx.store.append({ type: 'report', id: `report-${now.toString(36)}-${eventSeq++}`, at: now, path: reportPath })
 
+  const trigger = options.trigger ?? 'tick'
+  const runId = `run-${now.toString(36)}-${eventSeq++}`
+  ctx.store.append({
+    type: 'run',
+    id: runId,
+    at: now,
+    trigger,
+    health,
+    blindSpots,
+    notes,
+    reportPath,
+  })
+
   return {
-    runId: `run-${now.toString(36)}`,
+    runId,
     at: now,
     host,
-    trigger: options.trigger ?? 'tick',
+    trigger,
     health,
     observations,
     blindSpots,
@@ -255,6 +266,84 @@ export function formatInspection(result: InspectionResult): string {
   return parts.join(' | ')
 }
 
+export interface CollectorHealth {
+  readonly name: string
+  readonly lastStatus?: ObservationStatus
+  readonly lastOkAt?: number
+  readonly ageHours?: number
+}
+
+export interface HealthSummary {
+  readonly now: number
+  readonly lastRun?: RunEvent
+  readonly lastOkRun?: RunEvent
+  readonly collectors: readonly CollectorHealth[]
+  /** Collectors whose last success is older than the validity window. */
+  readonly stale: readonly string[]
+  readonly blindSpots: readonly string[]
+  /** Checks that are enabled but cannot run yet, e.g. backup without a path. */
+  readonly skipped: readonly string[]
+}
+
+/** "When did it last work, what didn't we read, and is the data still usable." */
+export function inspectionHealth(store: WatchStore, config: WatchConfig, now: number): HealthSummary {
+  const latest = store.latestObservations()
+  const validHours = config.observationValidHours ?? 26
+  const enabled: string[] = []
+  const skipped: string[] = []
+  if (config.ports) enabled.push('ports')
+  if (config.ssh) enabled.push('ssh')
+  if (config.backup && config.backupPaths.length > 0) enabled.push('backup')
+  if (config.backup && config.backupPaths.length === 0) skipped.push('backup（没有配置 backupPaths）')
+
+  const collectors: CollectorHealth[] = enabled.map((name) => {
+    const lastOkAt = store.lastOkAt(name)
+    const latestObservation = latest.get(name)
+    const lastStatus = latestObservation ? observationStatus(latestObservation) : undefined
+    const ageHours = lastOkAt !== undefined ? (now - lastOkAt) / 3_600_000 : undefined
+    return {
+      name,
+      ...(lastStatus ? { lastStatus } : {}),
+      ...(lastOkAt !== undefined ? { lastOkAt } : {}),
+      ...(ageHours !== undefined ? { ageHours: Math.round(ageHours) } : {}),
+    }
+  })
+
+  const stale = collectors
+    .filter((item) => item.lastStatus !== 'ok' && item.ageHours !== undefined && item.ageHours > validHours)
+    .map((item) => `${item.name}（上次成功 ${item.ageHours} 小时前）`)
+
+  const lastRun = store.lastRun()
+  const lastOkRun = store.lastOkRun()
+  return {
+    now,
+    ...(lastRun ? { lastRun } : {}),
+    ...(lastOkRun ? { lastOkRun } : {}),
+    collectors,
+    stale,
+    blindSpots: lastRun?.blindSpots ?? [],
+    skipped,
+  }
+}
+
+export function formatHealth(summary: HealthSummary): string {
+  const lines: string[] = []
+  lines.push(`巡检健康（${localStamp(summary.now)}）`)
+  lines.push('')
+  lines.push(`最近一轮：${summary.lastRun ? `${localStamp(summary.lastRun.at)} · ${summary.lastRun.trigger} · ${statusLabel(summary.lastRun.health)}` : '还没有任何巡检记录'}`)
+  lines.push(`最近成功：${summary.lastOkRun ? `${localStamp(summary.lastOkRun.at)}（${summary.lastOkRun.trigger}）` : '还没有一轮是全绿'}`)
+  if (summary.blindSpots.length > 0) lines.push(`最近盲区：${summary.blindSpots.join('、')}`)
+  if (summary.stale.length > 0) lines.push(`数据过期：${summary.stale.join('、')}`)
+  if (summary.skipped.length > 0) lines.push(`未运行：${summary.skipped.join('、')}`)
+  lines.push('')
+  for (const collector of summary.collectors) {
+    const status = collector.lastStatus ? statusLabel(collector.lastStatus) : '从未读到'
+    const lastOk = collector.lastOkAt ? localStamp(collector.lastOkAt) : '无'
+    lines.push(`- ${collector.name}：当前 ${status}；上次成功 ${lastOk}`)
+  }
+  return lines.join('\n')
+}
+
 function factSummary(facts: readonly Fact[]): string {
   const byKind = new Map<string, number>()
   for (const fact of facts) byKind.set(fact.kind, (byKind.get(fact.kind) ?? 0) + 1)
@@ -269,6 +358,11 @@ export function takeBaseline(ctx: WatchContext): string {
   if (observations.length === 0) {
     return '没有启用任何采集项，基线是空的。先在配置里打开 ports / ssh / backup，再试。'
   }
+  const unread = observations.filter((observation) => observationStatus(observation) !== 'ok')
+  if (unread.length > 0) {
+    const names = unread.map((observation) => `${observation.collector}（${statusLabel(observationStatus(observation))}）`)
+    return `基线不完整：${names.join('、')} 没有读全，这次不记录基线。先修采集或等下一次成功——半份基线会让之后的端口和公钥比较失真。`
+  }
   const facts = observations.flatMap((observation) => observation.facts)
   const baseline: Baseline = {
     type: 'baseline',
@@ -280,7 +374,7 @@ export function takeBaseline(ctx: WatchContext): string {
   }
   ctx.store.append(baseline)
   const ports = facts.filter((fact) => fact.kind === 'listen_port').length
-  return `已记录基线（${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}）：${factSummary(facts)}。其中监听端口 ${ports} 个。之后的变化都以它为参照。`
+  return `已记录基线（${localStamp(now)}）：${factSummary(facts)}。其中监听端口 ${ports} 个。之后的变化都以它为参照。`
 }
 
 /** Compare what is true now with the latest baseline; record only findings not already open. */

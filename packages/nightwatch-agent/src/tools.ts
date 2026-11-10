@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { join } from 'node:path'
 import { applyProposal } from './apply.js'
 import type { Runner } from './collect.js'
-import { takeBaseline, takeDiff, writeReport } from './inspect.js'
+import { formatHealth, inspectionHealth, takeBaseline, takeDiff, writeReport } from './inspect.js'
 import { buildProposal, formatProposal } from './propose.js'
 import type { WatchStore } from './store.js'
 import { timelineText } from './timeline.js'
@@ -135,6 +135,19 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
       output: TEXT_OUTPUT,
       async execute({ findingId, key }: { findingId?: string; key?: string }) {
         return proposeFix(watch, { ...(findingId ? { findingId } : {}), ...(key ? { key } : {}) })
+      },
+    }),
+  )
+
+  ctx.tools.register(
+    defineTool({
+      name: 'watch_health',
+      description:
+        'Answer when the last inspection ran, when it last read everything successfully, which collectors are blind or stale, and what is still open. Read-only.',
+      parameters: {},
+      output: TEXT_OUTPUT,
+      async execute() {
+        return formatHealth(inspectionHealth(watch.store, watch.config, at(watch)))
       },
     }),
   )

@@ -1,4 +1,5 @@
 import { statusLabel } from './health.js'
+import { localStamp } from './time.js'
 import type { WatchStore } from './store.js'
 import type { TimelinePoint } from './types.js'
 
@@ -21,10 +22,6 @@ export function queryTimeline(store: WatchStore, key: string, days: number, now:
   return { key, from, to: now, points: store.timeline(key, from, now) }
 }
 
-function stamp(at: number): string {
-  return new Date(at).toISOString().replace('T', ' ').slice(0, 16)
-}
-
 const LABELS: Record<TimelinePoint['kind'], string> = {
   observed: '读到',
   finding: '发现',
@@ -34,7 +31,7 @@ const LABELS: Record<TimelinePoint['kind'], string> = {
 
 export function renderTimeline(result: TimelineResult): string {
   const lines: string[] = []
-  lines.push(`时间线：${result.key}（${stamp(result.from)} → ${stamp(result.to)}）`)
+  lines.push(`时间线：${result.key}（${localStamp(result.from)} → ${localStamp(result.to)}）`)
   lines.push('')
   if (result.points.length === 0) {
     lines.push('这个窗口里没有读到这个 key，也没有相关发现。可能是采集没跑、失败，或者它从未出现过。')
@@ -43,7 +40,7 @@ export function renderTimeline(result: TimelineResult): string {
   const observed = result.points.filter((point) => point.kind === 'observed')
   for (const point of result.points) {
     const status = point.kind === 'observed' && point.status && point.status !== 'ok' ? `（${statusLabel(point.status)}）` : ''
-    lines.push(`- ${stamp(point.at)} [${LABELS[point.kind]}] ${status}${point.detail}`)
+    lines.push(`- ${localStamp(point.at)} [${LABELS[point.kind]}] ${status}${point.detail}`)
   }
   lines.push('')
   if (observed.length === 0) {

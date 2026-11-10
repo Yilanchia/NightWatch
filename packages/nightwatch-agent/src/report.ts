@@ -1,4 +1,5 @@
 import { observationStatus, statusLabel } from './health.js'
+import { localStamp } from './time.js'
 import type { Baseline, Fact, Finding, Observation } from './types.js'
 
 /**
@@ -29,10 +30,6 @@ export interface ReportInput {
   readonly notes?: readonly string[]
 }
 
-function localTime(at: number): string {
-  return new Date(at).toISOString().replace('T', ' ').slice(0, 16)
-}
-
 function severityRank(severity: Finding['severity']): number {
   return severity === 'high' ? 0 : severity === 'medium' ? 1 : 2
 }
@@ -58,7 +55,7 @@ export function renderReport(input: ReportInput): string {
   const lines: string[] = []
   lines.push(`# 守夜人日报 · ${input.day}`)
   lines.push('')
-  lines.push(`机器：${input.host} · 生成于 ${localTime(input.at)}`)
+  lines.push(`机器：${input.host} · 生成于 ${localStamp(input.at)}`)
   lines.push('')
 
   lines.push('## 一句话')
@@ -90,7 +87,7 @@ export function renderReport(input: ReportInput): string {
     lines.push('## 已恢复')
     lines.push('')
     for (const finding of input.resolved ?? []) {
-      lines.push(`- **[${finding.severity}] ${finding.title}**（首次 ${localTime(finding.firstSeen ?? finding.at)}，恢复 ${localTime(finding.resolvedAt ?? finding.at)}）`)
+      lines.push(`- **[${finding.severity}] ${finding.title}**（首次 ${localStamp(finding.firstSeen ?? finding.at)}，恢复 ${localStamp(finding.resolvedAt ?? finding.at)}）`)
     }
     lines.push('')
   }
@@ -102,7 +99,7 @@ export function renderReport(input: ReportInput): string {
   for (const [collector, observation] of [...input.observations.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     const status = observationStatus(observation)
     const command = observation.evidence.map((read) => read.command).join('；').replace(/\|/g, '\\|')
-    lines.push(`| ${collector} | ${statusLabel(status)} | ${observation.facts.length} | ${localTime(observation.at)} | ${command} |`)
+    lines.push(`| ${collector} | ${statusLabel(status)} | ${observation.facts.length} | ${localStamp(observation.at)} | ${command} |`)
   }
   if (blindSpots.length > 0) {
     lines.push('')
@@ -117,7 +114,7 @@ export function renderReport(input: ReportInput): string {
   lines.push('## 基线')
   lines.push('')
   if (input.baseline) {
-    lines.push(`最近一次基线：${localTime(input.baseline.at)}，${input.baseline.facts.length} 条事实。`)
+    lines.push(`最近一次基线：${localStamp(input.baseline.at)}，${input.baseline.facts.length} 条事实。`)
   } else {
     lines.push('还没有基线。先跑一次 `watch_baseline`；没有基线时端口变化不判定，避免把"不知道"说成"没变化"。')
   }

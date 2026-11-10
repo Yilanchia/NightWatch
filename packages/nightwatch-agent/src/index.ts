@@ -8,12 +8,16 @@ export { applyProposal } from './apply.js'
 export { collectAll, defaultRunner, type CollectorConfig, type RunResult, type Runner } from './collect.js'
 export { observationStatus, overallStatus, statusLabel, statusOf } from './health.js'
 export {
+  formatHealth,
   formatInspection,
+  inspectionHealth,
   localDay,
   runInspection,
   takeBaseline,
   takeDiff,
   writeReport,
+  type CollectorHealth,
+  type HealthSummary,
   type InspectionOptions,
   type InspectionResult,
 } from './inspect.js'
@@ -23,6 +27,7 @@ export { diffFacts, diffSnapshot, mapByKey } from './rules.js'
 export { renderReport } from './report.js'
 export { WatchStore } from './store.js'
 export { queryTimeline, renderTimeline, timelineText, type TimelineResult } from './timeline.js'
+export { localStamp } from './time.js'
 export { proposeFix, applyFix, type WatchConfig, type WatchContext } from './tools.js'
 export type {
   Baseline,
@@ -35,6 +40,7 @@ export type {
   FixProposal,
   Observation,
   ObservationStatus,
+  RunEvent,
   Severity,
   Snapshot,
   TimelinePoint,

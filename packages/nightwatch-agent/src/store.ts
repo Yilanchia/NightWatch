@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { dirname } from 'node:path'
 import { statusOf } from './health.js'
-import type { Baseline, Fact, Finding, FixChange, FixProposal, Observation, ObservationStatus, TimelinePoint, WatchEvent } from './types.js'
+import type { Baseline, Fact, Finding, FixChange, FixProposal, Observation, ObservationStatus, RunEvent, TimelinePoint, WatchEvent } from './types.js'
 
 /**
  * The evidence log and its view.
@@ -37,6 +37,7 @@ DROP TABLE IF EXISTS baselines;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS proposals;
 DROP TABLE IF EXISTS actions;
+DROP TABLE IF EXISTS runs;
 CREATE TABLE observations (
   id TEXT PRIMARY KEY,
   at INTEGER NOT NULL,
@@ -113,6 +114,17 @@ CREATE TABLE IF NOT EXISTS actions (
   detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS actions_by_proposal ON actions (proposal_id);
+CREATE TABLE IF NOT EXISTS runs (
+  id TEXT PRIMARY KEY,
+  at INTEGER NOT NULL,
+  trigger TEXT NOT NULL,
+  health TEXT NOT NULL,
+  blind_spots TEXT NOT NULL,
+  notes TEXT NOT NULL,
+  report_path TEXT
+);
+CREATE INDEX IF NOT EXISTS runs_by_at ON runs (at);
+CREATE INDEX IF NOT EXISTS runs_by_health ON runs (health, at);
 CREATE INDEX IF NOT EXISTS findings_by_key ON findings (key);
 CREATE INDEX IF NOT EXISTS findings_by_status ON findings (status);
 CREATE INDEX IF NOT EXISTS observations_by_collector ON observations (collector, at);
@@ -245,7 +257,7 @@ export class WatchStore {
   /** Drops the view and replays the log. Always called on open, so the view can never drift. */
   rebuild(): void {
     this.db.exec(
-      'DELETE FROM observations; DELETE FROM findings; DELETE FROM finding_updates; DELETE FROM baselines; DELETE FROM reports; DELETE FROM proposals; DELETE FROM actions;',
+      'DELETE FROM observations; DELETE FROM findings; DELETE FROM finding_updates; DELETE FROM baselines; DELETE FROM reports; DELETE FROM proposals; DELETE FROM actions; DELETE FROM runs;',
     )
     this.ids.clear()
     for (const event of this.events()) {
@@ -313,6 +325,11 @@ export class WatchStore {
             'UPDATE findings SET status = COALESCE(?, status), last_seen = COALESCE(?, last_seen), last_checked = COALESCE(?, last_checked), resolved_at = COALESCE(?, resolved_at) WHERE id = ?',
           )
           .run(event.status ?? null, event.lastSeen ?? null, event.lastChecked ?? null, event.resolvedAt ?? null, event.findingId)
+        return
+      case 'run':
+        this.db
+          .prepare('INSERT OR REPLACE INTO runs (id, at, trigger, health, blind_spots, notes, report_path) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(event.id, event.at, event.trigger, event.health, JSON.stringify(event.blindSpots), JSON.stringify(event.notes), event.reportPath ?? null)
         return
       case 'baseline':
         this.db
@@ -607,6 +624,45 @@ export class WatchStore {
     }
 
     return points.sort((left, right) => left.at - right.at)
+  }
+
+  /** The newest inspection pass, successful or not. */
+  lastRun(): RunEvent | undefined {
+    return this.runRow(
+      this.db.prepare('SELECT id, at, trigger, health, blind_spots, notes, report_path FROM runs ORDER BY at DESC LIMIT 1').get(),
+    )
+  }
+
+  /** The newest inspection that read every enabled collector successfully. */
+  lastOkRun(): RunEvent | undefined {
+    return this.runRow(
+      this.db
+        .prepare("SELECT id, at, trigger, health, blind_spots, notes, report_path FROM runs WHERE health = 'ok' ORDER BY at DESC LIMIT 1")
+        .get(),
+    )
+  }
+
+  private runRow(row: unknown): RunEvent | undefined {
+    if (!row) return undefined
+    const value = row as {
+      id: string
+      at: number
+      trigger: string
+      health: string
+      blind_spots: string
+      notes: string
+      report_path: string | null
+    }
+    return {
+      type: 'run',
+      id: value.id,
+      at: value.at,
+      trigger: value.trigger,
+      health: value.health as ObservationStatus,
+      blindSpots: JSON.parse(value.blind_spots) as string[],
+      notes: JSON.parse(value.notes) as string[],
+      ...(value.report_path !== null ? { reportPath: value.report_path } : {}),
+    }
   }
 
   close(): void {

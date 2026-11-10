@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Runner } from './collect.js'
-import { runInspection, writeReport } from './inspect.js'
+import { inspectionHealth, runInspection, takeBaseline, writeReport } from './inspect.js'
 import { WatchStore } from './store.js'
 import type { WatchConfig } from './tools.js'
 import type { Baseline, Observation } from './types.js'
@@ -205,6 +205,61 @@ test('a failed read older than the validity window is reported as stale data', (
     assert.match(readFileSync(result.reportPath, 'utf8'), /数据已过期/)
   } finally {
     cleanup()
+  }
+})
+
+test('a partial baseline is refused instead of being stored half-read', () => {
+  const { context, store, cleanup } = setup(ssFailed)
+  try {
+    const message = takeBaseline(context)
+    assert.match(message, /基线不完整/)
+    assert.equal(store.latestBaseline(), undefined)
+  } finally {
+    cleanup()
+  }
+})
+
+test('each run is recorded and health separates last run from last all-green run', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-runs-'))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'),
+    databasePath: join(dir, 'watch.db'),
+    reportDir: join(dir, 'reports'),
+    ports: true,
+    ssh: false,
+    backup: false,
+    backupPaths: [],
+    backupStaleHours: 36,
+  }
+  let failing = false
+  const runner: Runner = (command) =>
+    command === 'ss'
+      ? failing
+        ? { exit: 127, stdout: '', stderr: 'no ss' }
+        : { exit: 0, stdout: PORTS, stderr: '' }
+      : { exit: 127, stdout: '', stderr: '' }
+  const context = { store, config, platform: 'linux' as const, now: () => at, runner }
+  try {
+    const first = runInspection(context, { now: at })
+    assert.equal(store.lastRun()?.id, first.runId)
+    assert.equal(store.lastRun()?.health, 'ok')
+    assert.equal(store.lastOkRun()?.id, first.runId)
+
+    failing = true
+    const second = runInspection(context, { now: at + 30 * 3_600_000 })
+    assert.equal(second.health, 'failed')
+    assert.equal(store.lastRun()?.id, second.runId)
+    assert.equal(store.lastOkRun()?.id, first.runId)
+
+    const summary = inspectionHealth(store, config, at + 30 * 3_600_000)
+    assert.equal(summary.lastRun?.id, second.runId)
+    assert.equal(summary.lastOkRun?.id, first.runId)
+    assert.ok(summary.blindSpots.length > 0)
+    assert.ok(summary.stale.some((item) => item.startsWith('ports')))
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
