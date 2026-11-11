@@ -97,15 +97,33 @@ function defaultAuthorizedKeys(): string {
   return join(home, '.ssh', 'authorized_keys')
 }
 
-function collectSsh(config: CollectorConfig, platform: NodeJS.Platform): Read {
+function collectSsh(config: CollectorConfig, platform: NodeJS.Platform, runner: Runner): Read {
   const configPath = config.sshdConfig ?? defaultSshdConfig(platform)
   const keysPath = config.authorizedKeys ?? defaultAuthorizedKeys()
   const facts: Fact[] = []
   const evidence: Evidence[] = []
 
-  const sshd = readFileEvidence(`read ${configPath}`, configPath)
-  evidence.push(sshd.evidence)
-  if (sshd.text !== undefined) facts.push(...parseSshdConfig(sshd.text))
+  // On Linux, `sshd -T` prints the effective configuration: Include, Match and defaults are
+  // already resolved. It is read-only. If it is unavailable (non-root, missing binary), fall
+  // back to parsing the main file and say so through the evidence of the file read.
+  let effective = false
+  if (platform !== 'win32') {
+    const dump = runner('sshd', ['-T'])
+    if (dump.exit === 0 && dump.stdout.trim()) {
+      const parsed = parseSshdConfig(dump.stdout)
+      if (parsed.length > 0) {
+        facts.push(...parsed)
+        evidence.push(evidenceOf('sshd -T', dump))
+        effective = true
+      }
+    }
+  }
+
+  if (!effective) {
+    const sshd = readFileEvidence(`read ${configPath}`, configPath)
+    evidence.push(sshd.evidence)
+    if (sshd.text !== undefined) facts.push(...parseSshdConfig(sshd.text))
+  }
 
   const keys = readFileEvidence(`read ${keysPath}`, keysPath)
   evidence.push(keys.evidence)
@@ -180,7 +198,7 @@ export function collectAll(config: CollectorConfig, options: CollectOptions = {}
   const host = hostname()
   const reads: Array<[string, Read | undefined]> = []
   if (config.ports) reads.push(['ports', collectPorts(platform, runner)])
-  if (config.ssh) reads.push(['ssh', collectSsh(config, platform)])
+  if (config.ssh) reads.push(['ssh', collectSsh(config, platform, runner)])
   if (config.backup) reads.push(['backup', collectBackup(config)])
 
   return reads

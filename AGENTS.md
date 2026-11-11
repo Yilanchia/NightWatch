@@ -30,9 +30,9 @@
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-10）：`pnpm test` **58 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+最近验证（2026-11-11）：`pnpm test` **60 通过**；`node scripts/nightwatch.mjs smoke` 通过；
 `tick` / `health` / `timeline` / `daemon` 在临时 home 与验收机上跑通；`inspect.js` 依赖闭包无 `@deepseek-ai`；
-验收机已从 systemd timer 切到内置 `daemon`（单实例写锁、重启补跑一次），开始 7 天观察。
+Linux SSH 走 `sshd -T` 生效配置；验收机由内置 `daemon` 持续巡检（7 天观察中）。
 
 ## 代码地图
 
@@ -78,6 +78,7 @@
    - ✅ **配置统一**：CLI 与宿主共用 `NIGHTWATCH_*` 环境变量（见 `packages/nightwatch-host/cordis.patch.yml`）。
    - ✅ **内置调度**：`nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；验收机已切换。
      只读命令 `health` / `timeline` 走只读视图，可在 daemon 运行时用；`tick` / `baseline` 需要写锁。
+   - ✅ **SSH 生效配置**：Linux 先跑 `sshd -T`（Include / Match / 默认值已解析），失败才回退主文件。
 3. **M0 宿主落地**：按 `m0-host-research.md` §7 的显式组合替换 web profile，补启动自检。
 4. M1 多端（文档 `Nightwatch-多端智能防护网设计.md`）等单机 7 天验收通过再开；osquery / Sigma 继续后置。
 
@@ -112,8 +113,8 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（58）、smoke 都是好的；`inspect.ts` / `timeline.ts` / `time.ts` 不依赖 DSH，`tick` / `health` / `daemon` 可无模型运行。
-- P0 全部修完（1–6）；`run` 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度已落地。
+- 代码、测试（60）、smoke 都是好的；`inspect.ts` / `timeline.ts` / `time.ts` 不依赖 DSH，`tick` / `health` / `daemon` 可无模型运行。
+- P0 全部修完（1–6）；`run` 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
 - 首台验收机已切到内置 `daemon` 开始 7 天观察（2026-11-10 → 11-17）；只读 health/timeline 可在 daemon 运行时用。
 - 下一步：M0 宿主显式组合与启动自检；7 天验收通过后再评估多端；别先接 osquery。
 

@@ -196,7 +196,14 @@ async function timeline(home, key, days) {
 async function health(home) {
   const { core, store } = await openReadCore(home)
   try {
-    console.log(core.formatHealth(core.inspectionHealth(store, coreConfig(home), Date.now())))
+    const summary = core.inspectionHealth(store, coreConfig(home), Date.now())
+    const lines = [core.formatHealth(summary)]
+    const minutes = Number(process.env.NIGHTWATCH_INTERVAL_MINUTES ?? 0)
+    if (summary.lastRun && minutes > 0) {
+      const time = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'time.js')).href)
+      lines.push(`下一轮约：${time.localStamp(summary.lastRun.at + minutes * 60_000)}（间隔 ${minutes} 分钟）`)
+    }
+    console.log(lines.join('\n'))
   } finally {
     store.close()
   }
