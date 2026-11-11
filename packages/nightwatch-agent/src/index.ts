@@ -6,7 +6,19 @@ import { registerTools, type WatchConfig } from './tools.js'
 
 export { applyProposal } from './apply.js'
 export { collectAll, defaultRunner, type CollectorConfig, type RunResult, type Runner } from './collect.js'
+export {
+  buildBundle,
+  canonicalJson,
+  verifyBundle,
+  type BundleFinding,
+  type BundleHealth,
+  type BundlePayload,
+  type BundleRun,
+  type NodeBundle,
+  type VerifyResult,
+} from './export.js'
 export { observationStatus, overallStatus, statusLabel, statusOf } from './health.js'
+export { ensureIdentity, nodeIdFor, signPayload, verifyPayload, type NodeIdentity } from './identity.js'
 export {
   formatHealth,
   formatInspection,

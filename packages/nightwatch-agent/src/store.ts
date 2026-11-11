@@ -655,6 +655,19 @@ export class WatchStore {
     )
   }
 
+  /** Runs inside a window, oldest first, for bundles and audits. */
+  runsSince(from: number, to = Number.POSITIVE_INFINITY): RunEvent[] {
+    const rows = this.db
+      .prepare('SELECT id, at, trigger, health, blind_spots, notes, report_path FROM runs WHERE at >= ? AND at <= ? ORDER BY at')
+      .all(from, to) as unknown[]
+    const runs: RunEvent[] = []
+    for (const row of rows) {
+      const run = this.runRow(row)
+      if (run) runs.push(run)
+    }
+    return runs
+  }
+
   /** The newest inspection that read every enabled collector successfully. */
   lastOkRun(): RunEvent | undefined {
     return this.runRow(

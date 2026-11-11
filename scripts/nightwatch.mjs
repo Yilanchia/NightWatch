@@ -12,6 +12,8 @@
 //   node scripts/nightwatch.mjs timeline  show one fact's reads/findings/resolution over a window
 //   node scripts/nightwatch.mjs health    last run, last success, blind spots and stale collectors
 //   node scripts/nightwatch.mjs daemon    built-in scheduler (foreground; catch-up once, no overlap)
+//   node scripts/nightwatch.mjs export    signed cross-node summary (findings + health, no raw facts)
+//   node scripts/nightwatch.mjs verify    check a bundle signature
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -209,6 +211,28 @@ async function health(home) {
   }
 }
 
+/** Signed summary bundle: findings + run health, no raw facts or evidence. */
+async function exportBundle(home, days) {
+  const { store } = await openReadCore(home)
+  try {
+    const identity = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'identity.js')).href)
+    const exporter = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'export.js')).href)
+    const nodeIdentity = identity.ensureIdentity(home)
+    const bundle = exporter.buildBundle(store, coreConfig(home), nodeIdentity, { now: Date.now(), days: Number(days ?? 7) })
+    console.log(JSON.stringify(bundle, null, 2))
+  } finally {
+    store.close()
+  }
+}
+
+async function verifyBundleFile(file) {
+  const exporter = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'export.js')).href)
+  const bundle = JSON.parse(readFileSync(file, 'utf8'))
+  const result = exporter.verifyBundle(bundle)
+  console.log(result.ok ? `签名有效（节点 ${bundle.payload.node.id}）` : `校验失败：${result.reason}`)
+  if (!result.ok) process.exitCode = 1
+}
+
 /**
  * Built-in scheduler. Holds the evidence lock for its lifetime (so no second writer can interleave),
  * catches up a missed run once after a restart, and never overlaps inspections.
@@ -285,6 +309,14 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await daemon(home, process.argv[4])
+  } else if (command === 'export') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await exportBundle(home, process.argv[4])
+  } else if (command === 'verify') {
+    const file = process.argv[3]
+    if (!file) throw new Error('verify 需要 bundle 文件路径')
+    await verifyBundleFile(resolve(file))
   } else {
     throw new Error(`unknown command ${command}`)
   }
