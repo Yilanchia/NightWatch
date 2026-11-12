@@ -132,10 +132,18 @@ async function selfcheck() {
     const match = /nightwatch-selfcheck (\{.*\})/.exec(run.output)
     if (!match) throw new Error(`selfcheck 没有输出结论：\n${run.output.split('\n').slice(-25).join('\n')}`)
     const result = JSON.parse(match[1])
-    if (code !== 0 || result.extra.length > 0 || result.missing.length > 0) {
-      throw new Error(`selfcheck 失败（exit ${code}）：extra=[${result.extra.join(', ')}] missing=[${result.missing.join(', ')}]`)
+    const gateBad = !result.gate || !result.gate.pass
+    const dangerous = result.dangerousReachable ?? []
+    if (code !== 0 || result.extra.length > 0 || result.missing.length > 0 || dangerous.length > 0 || gateBad) {
+      throw new Error(
+        `selfcheck 失败（exit ${code}）：extra=[${result.extra.join(', ')}] missing=[${result.missing.join(', ')}]` +
+          ` dangerous=[${dangerous.join(', ')}] gate=${JSON.stringify(result.gate ?? null)}${result.error ? ` error=${result.error}` : ''}`,
+      )
     }
     console.log(`selfcheck passed — tools: ${result.tools.join(', ')}`)
+    console.log(`  工具面：只有 watch_* 只读工具，危险能力可达 ${dangerous.length ? dangerous.join('、') : '无'}`)
+    console.log(`  强制拒绝门：${result.gate.pass ? '生效（destructive 被挡下，工具体未执行）' : '未生效'}`)
+    console.log(`  guard 名称判定盲区：${result.guardNameBlind ? '存在——routine 名的写操作未被拦（见实施文档，需真正的策略决策点）' : '本轮未复现'}`)
   } finally {
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }

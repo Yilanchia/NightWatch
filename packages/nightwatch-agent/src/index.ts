@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { isAbsolute } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 import { WatchStore } from './store.js'
 import { registerTools, type WatchConfig } from './tools.js'
 
@@ -157,28 +157,21 @@ export function apply(ctx: Context, config: Config): void {
     `nightwatch: watching ${enabled.length > 0 ? enabled.join('/') : 'nothing'} — evidence ${config.evidencePath}, reports ${config.reportDir}`,
   )
 
-  // Used by the minimal-host self-check: after every plugin has mounted, report the real tool list
-  // and exit. The environment gate keeps this out of normal runs.
+  // Used by the minimal-host self-check: after every plugin has mounted, run the enforcement probe
+  // (tool surface + mandatory deny gate + name-blindness evidence) and exit. The environment gate
+  // keeps this out of normal runs. The 1.5s wait lets guard and the sibling plugins mount first.
   if (process.env.NIGHTWATCH_SELFCHECK === '1') {
     setTimeout(() => {
-      const tools = (ctx as unknown as { tools: { schemas: () => Array<{ name: string }> } }).tools
-        .schemas()
-        .map((schema) => schema.name)
-        .sort()
-      const allowed = new Set([
-        'watch_baseline',
-        'watch_diff',
-        'watch_report',
-        'watch_propose_fix',
-        'watch_timeline',
-        'watch_health',
-        'watch_apply_fix',
-      ])
-      const required = [...allowed].filter((name) => name !== 'watch_apply_fix')
-      const extra = tools.filter((name) => !allowed.has(name))
-      const missing = required.filter((name) => !tools.includes(name))
-      console.log(`nightwatch-selfcheck ${JSON.stringify({ tools, extra, missing })}`)
-      process.exit(extra.length > 0 || missing.length > 0 ? 1 : 0)
+      void (async () => {
+        const { runSelfcheck } = await import('./selfcheck.js')
+        const report = await runSelfcheck(ctx, dirname(config.evidencePath))
+        console.log(`nightwatch-selfcheck ${JSON.stringify(report)}`)
+        process.exit(report.pass ? 0 : 1)
+      })().catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.log(`nightwatch-selfcheck ${JSON.stringify({ error: reason, tools: [], extra: [], missing: ['<probe crashed>'], pass: false })}`)
+        process.exit(1)
+      })
     }, 1500)
   }
 }

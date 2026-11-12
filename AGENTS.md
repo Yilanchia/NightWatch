@@ -28,10 +28,11 @@
 | 启动器 | `scripts/nightwatch.mjs`（profile `nightwatch`，home `.nightwatch-home/`，端口 3091） |
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
-| 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
+| 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-12）：`pnpm test` **66 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
+最近验证（2026-11-13）：`pnpm test` **73 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
+`selfcheck` 现在不只验工具名，还真的 dispatch 一个 destructive 工具验证**强制拒绝门**（被挡且工具体未执行）；
 `tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate` 跑通；
 `inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
 
@@ -87,7 +88,10 @@
    - ✅ **M1 地基**：节点身份（Ed25519，ID=公钥指纹）+ 签名摘要（run/发现/健康，不含 facts/detail），
      CLI `export` / `verify`；协调端 `register` 显式登记、`ingest` 拒绝未登记节点、`correlate` 跨端关联；
      bundle 带 `seq` 与 `capabilities`。
-3. **M0 落地**：✅ `@nightwatch/standalone`（完整显式树）+ `nightwatch selfcheck`（工具面只允许 `watch_*`）。
+3. **M0 落地**：✅ `@nightwatch/standalone`（完整显式树）+ `nightwatch selfcheck`。selfcheck 已从"只验工具名"
+   升级为**强制力探针**：真实 dispatch 一个 destructive 工具，验证 `tools/pre-execute` 拒绝门生效（被挡且工具体未执行），
+   并记录 guard 的名称判定盲区。下一步（agent 介入 / 改 DSH）按 `docs/强制力探针与DSH改造-实施文档.md`：
+   先出口投影探针 → analyst+investigator 插件 → 策略决策点 PDP（能插件就插件，封不住才最小补丁）。
 4. M1 多端：本地 HTTP 传输原型已完成（`serve` / `push`，非 TLS）；TLS/部署方式、审批通道、真实两台主机联动待做；osquery / Sigma 继续后置。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
@@ -110,7 +114,7 @@ pnpm install
 npx tsc -b
 pnpm test
 node scripts/nightwatch.mjs smoke
-node scripts/nightwatch.mjs selfcheck        # 启动最小宿主，断言工具面只有 watch_*
+node scripts/nightwatch.mjs selfcheck        # 启动最小宿主，验工具面只有 watch_* + 强制拒绝门生效（见 docs/强制力探针与DSH改造-实施文档.md）
 node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线（有盲区时拒绝）
 node scripts/nightwatch.mjs tick <home>       # 无模型巡检：0 正常 / 2 部分 / 1 失败
 node scripts/nightwatch.mjs health <home>     # 最近成功、盲区、数据过期、未运行项
