@@ -23,7 +23,7 @@
 
 ## 现状（2026-11-10，评审后 + 首台验收机）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**跨端签名摘要**（节点身份 + `nightwatch export` / `verify`，证据不出节点）。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**跨端摘要与协调端原型**（节点身份 + `export` / `verify` / `ingest` / `correlate`，证据不出节点）。
 
 **首台 Linux 验收机**已上线（`NODE_A_IP`，Ubuntu 22.04），systemd 每日 03:30 巡检，7 天观察从 2026-11-10 开始。部署与验收点见 [docs/服务器验收-2026-11-10.md](docs/服务器验收-2026-11-10.md)。
 
@@ -100,6 +100,8 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs daemon <home> [minutes]` | 内置调度：前台常驻，单实例写锁，重启补跑一次 |
 | `node scripts/nightwatch.mjs export <home> [days]` | 输出签名摘要（发现 + 健康，不含原始事实） |
 | `node scripts/nightwatch.mjs verify <bundle.json>` | 校验摘要签名与节点 ID |
+| `node scripts/nightwatch.mjs ingest <state.json> <bundle.json>` | 协调端：验签并幂等摄入 |
+| `node scripts/nightwatch.mjs correlate <state.json>` | 按事实 key 跨节点关联 |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
 
 ## 代码结构

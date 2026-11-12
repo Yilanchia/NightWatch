@@ -7,6 +7,16 @@ import { registerTools, type WatchConfig } from './tools.js'
 export { applyProposal } from './apply.js'
 export { collectAll, defaultRunner, type CollectorConfig, type RunResult, type Runner } from './collect.js'
 export {
+  correlate,
+  emptyState,
+  ingestBundle,
+  type CoordinatorFinding,
+  type CoordinatorNode,
+  type CoordinatorState,
+  type CorrelatedGroup,
+  type IngestResult,
+} from './coordinator.js'
+export {
   buildBundle,
   canonicalJson,
   verifyBundle,

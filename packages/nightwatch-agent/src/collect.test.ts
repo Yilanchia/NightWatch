@@ -2,8 +2,8 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { collectAll, type Runner } from './collect.js'
+import { isAbsolute, join } from 'node:path'
+import { collectAll, defaultAuthorizedKeys, type Runner } from './collect.js'
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'nightwatch-collect-'))
@@ -42,6 +42,23 @@ test('Linux uses sshd -T so Include/Match/defaults are already resolved', () => 
     assert.equal(observation.status, 'ok')
   } finally {
     cleanup()
+  }
+})
+
+test('authorized_keys falls back to the OS home when HOME is unset', () => {
+  const savedHome = process.env.HOME
+  const savedProfile = process.env.USERPROFILE
+  try {
+    delete process.env.HOME
+    delete process.env.USERPROFILE
+    const path = defaultAuthorizedKeys()
+    assert.equal(isAbsolute(path), true)
+    assert.match(path, /[\\/]\.ssh[\\/]authorized_keys$/)
+  } finally {
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+    if (savedProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = savedProfile
   }
 })
 

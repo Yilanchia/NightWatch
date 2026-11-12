@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import {
   digest,
@@ -92,8 +92,10 @@ function defaultSshdConfig(platform: NodeJS.Platform): string {
   return platform === 'win32' ? join(process.env.ProgramData ?? 'C:\\ProgramData', 'ssh', 'sshd_config') : '/etc/ssh/sshd_config'
 }
 
-function defaultAuthorizedKeys(): string {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+export function defaultAuthorizedKeys(): string {
+  // systemd services often run without HOME; falling back to '' produced a relative
+  // ".ssh/authorized_keys" and made every daemon run report ssh as partial.
+  const home = process.env.HOME || process.env.USERPROFILE || homedir()
   return join(home, '.ssh', 'authorized_keys')
 }
 

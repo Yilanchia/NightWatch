@@ -14,8 +14,10 @@
 //   node scripts/nightwatch.mjs daemon    built-in scheduler (foreground; catch-up once, no overlap)
 //   node scripts/nightwatch.mjs export    signed cross-node summary (findings + health, no raw facts)
 //   node scripts/nightwatch.mjs verify    check a bundle signature
+//   node scripts/nightwatch.mjs ingest    add a bundle to a coordinator state file
+//   node scripts/nightwatch.mjs correlate group open findings across nodes (same fact key)
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -233,6 +235,43 @@ async function verifyBundleFile(file) {
   if (!result.ok) process.exitCode = 1
 }
 
+/** Add one signed bundle to a coordinator state file (verify + dedupe, no raw evidence). */
+async function ingestCommand(stateFile, bundleFile) {
+  const coordinator = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'coordinator.js')).href)
+  const now = Date.now()
+  const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : coordinator.emptyState(now)
+  const bundle = JSON.parse(readFileSync(bundleFile, 'utf8'))
+  const result = coordinator.ingestBundle(state, bundle, now)
+  if (!result.ok) {
+    console.error(`摄入失败：${result.reason}`)
+    process.exitCode = 1
+    return
+  }
+  const temporary = `${stateFile}.tmp-${process.pid}`
+  writeFileSync(temporary, `${JSON.stringify(result.state, null, 2)}\n`, 'utf8')
+  renameSync(temporary, stateFile)
+  console.log(`已摄入 ${result.nodeId}：新增 ${result.added} 条、更新 ${result.updated} 条；状态 ${stateFile}`)
+}
+
+/** Group open findings by fact key and mark groups seen on more than one node. */
+async function correlateCommand(stateFile) {
+  const coordinator = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'coordinator.js')).href)
+  if (!existsSync(stateFile)) {
+    console.error(`状态文件不存在：${stateFile}`)
+    process.exitCode = 1
+    return
+  }
+  const groups = coordinator.correlate(JSON.parse(readFileSync(stateFile, 'utf8')))
+  if (groups.length === 0) {
+    console.log('没有未关闭的发现。')
+    return
+  }
+  for (const group of groups) {
+    console.log(`${group.crossNode ? '[跨端] ' : ''}${group.key}（${group.kind}，${group.nodes.length} 个节点：${group.nodes.join(', ')}）`)
+    for (const finding of group.findings) console.log(`  - ${finding.nodeId} [${finding.severity}] ${finding.title}（${finding.status}）`)
+  }
+}
+
 /**
  * Built-in scheduler. Holds the evidence lock for its lifetime (so no second writer can interleave),
  * catches up a missed run once after a restart, and never overlaps inspections.
@@ -317,6 +356,15 @@ try {
     const file = process.argv[3]
     if (!file) throw new Error('verify 需要 bundle 文件路径')
     await verifyBundleFile(resolve(file))
+  } else if (command === 'ingest') {
+    const stateFile = process.argv[3]
+    const bundleFile = process.argv[4]
+    if (!stateFile || !bundleFile) throw new Error('ingest 需要 <state.json> <bundle.json>')
+    await ingestCommand(resolve(stateFile), resolve(bundleFile))
+  } else if (command === 'correlate') {
+    const stateFile = process.argv[3]
+    if (!stateFile) throw new Error('correlate 需要 <state.json>')
+    await correlateCommand(resolve(stateFile))
   } else {
     throw new Error(`unknown command ${command}`)
   }

@@ -19,6 +19,8 @@ export interface BundleRun {
 }
 
 export interface BundleFinding {
+  /** Local finding id; together with the node id it is the coordinator's dedupe key. */
+  readonly id: string
   readonly key: string
   readonly kind: string
   readonly severity: string
@@ -95,6 +97,7 @@ export function buildBundle(store: WatchStore, config: WatchConfig, identity: No
       if (seen.has(item.id)) continue
       seen.add(item.id)
       findings.push({
+        id: item.id,
         key: item.key,
         kind: item.kind,
         severity: item.severity,

@@ -30,9 +30,9 @@
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-11）：`pnpm test` **62 通过**；`node scripts/nightwatch.mjs smoke` 通过；
-`tick` / `health` / `timeline` / `daemon` / `export` / `verify` 在临时 home 与验收机上跑通；
-`inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T` 生效配置；验收机由内置 `daemon` 持续巡检。
+最近验证（2026-11-12）：`pnpm test` **65 通过**；`node scripts/nightwatch.mjs smoke` 通过；
+`tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `ingest` / `correlate` 跑通；
+`inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
 
 ## 代码地图
 
@@ -49,6 +49,7 @@
 | `src/time.ts` | 本地时间格式化（报告/时间线/健康统一用主机本地时间，不是 UTC） |
 | `src/identity.ts` | 节点身份：Ed25519 密钥对、节点 ID = 公钥指纹；私钥只在本机 |
 | `src/export.ts` | 跨端签名摘要：run/发现/健康，**不含 facts/evidence/detail** |
+| `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
 | `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
 | `src/propose.ts` | 修复计划（改哪行、风险、回滚、验证） |
 | `src/apply.ts` | 应用计划（仅三种 SSH 改行；备份/校验/回滚） |
@@ -82,9 +83,9 @@
      只读命令 `health` / `timeline` 走只读视图，可在 daemon 运行时用；`tick` / `baseline` 需要写锁。
    - ✅ **SSH 生效配置**：Linux 先跑 `sshd -T`（Include / Match / 默认值已解析），失败才回退主文件。
    - ✅ **M1 地基**：节点身份（Ed25519，ID=公钥指纹）+ 签名摘要（run/发现/健康，不含 facts/detail），
-     CLI `export` / `verify`。证据不出节点，协调端只收可验证摘要。
+     CLI `export` / `verify`；协调端原型 `ingest` / `correlate` 已能跨节点按事实 key 关联。
 3. **M0 宿主落地**：按 `m0-host-research.md` §7 的显式组合替换 web profile，补启动自检。
-4. M1 多端：设备登记、受限同步、协调端关联等 7 天验收通过后再开；osquery / Sigma 继续后置。
+4. M1 多端：设备登记、受限同步、审批等 7 天验收通过后再开；osquery / Sigma 继续后置。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
 风险恢复与复发都能解释；删 SQLite 后结果一致；巡检不需要云模型或系统写权限。
@@ -113,15 +114,17 @@ node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实�
 node scripts/nightwatch.mjs daemon <home> [minutes]       # 内置调度（前台；单实例写锁、补跑一次）
 node scripts/nightwatch.mjs export <home> [days]          # 签名摘要（findings/health，无原始事实）
 node scripts/nightwatch.mjs verify <bundle.json>          # 校验摘要签名与节点 ID
+node scripts/nightwatch.mjs ingest <state.json> <bundle.json>  # 协调端：验签并幂等摄入
+node scripts/nightwatch.mjs correlate <state.json>        # 按事实 key 跨节点关联
 node scripts/nightwatch.mjs web
 node scripts/nightwatch.mjs dump
 ```
 
 ## 交接时的状态
 
-- 代码、测试（62）、smoke 都是好的；核心模块不依赖 DSH，`tick` / `health` / `daemon` / `export` 可无模型运行。
+- 代码、测试（65）、smoke 都是好的；核心模块不依赖 DSH，`tick` / `health` / `daemon` / `export` / `ingest` 可无模型运行。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
-- M1 地基已开始：节点身份（Ed25519）+ 签名摘要（不含原始事实）；设备登记/同步等验收后再开。
+- M1 原型：节点身份 + 签名摘要 + 协调端摄入/关联；设备登记、传输、审批待验收后再开。
 - 首台验收机由内置 `daemon` 连续巡检（2026-11-10 → 11-17）；只读 health/timeline 可在 daemon 运行时用。
 - 下一步：M0 宿主显式组合与启动自检；7 天验收通过后再评估多端；别先接 osquery。
 
