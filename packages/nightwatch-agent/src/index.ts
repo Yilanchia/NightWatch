@@ -10,16 +10,19 @@ export {
   correlate,
   emptyState,
   ingestBundle,
+  registerNode,
   type CoordinatorFinding,
   type CoordinatorNode,
   type CoordinatorState,
   type CorrelatedGroup,
   type IngestResult,
+  type RegisterResult,
 } from './coordinator.js'
 export {
   buildBundle,
   canonicalJson,
   verifyBundle,
+  type BundleCapabilities,
   type BundleFinding,
   type BundleHealth,
   type BundlePayload,
@@ -50,6 +53,7 @@ export { renderReport } from './report.js'
 export { WatchStore } from './store.js'
 export { queryTimeline, renderTimeline, timelineText, type TimelineResult } from './timeline.js'
 export { localStamp } from './time.js'
+export { startCoordinatorServer, type CoordinatorServer, type CoordinatorServerOptions } from './transport.js'
 export { proposeFix, applyFix, type WatchConfig, type WatchContext } from './tools.js'
 export type {
   Baseline,
@@ -152,4 +156,29 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info(
     `nightwatch: watching ${enabled.length > 0 ? enabled.join('/') : 'nothing'} — evidence ${config.evidencePath}, reports ${config.reportDir}`,
   )
+
+  // Used by the minimal-host self-check: after every plugin has mounted, report the real tool list
+  // and exit. The environment gate keeps this out of normal runs.
+  if (process.env.NIGHTWATCH_SELFCHECK === '1') {
+    setTimeout(() => {
+      const tools = (ctx as unknown as { tools: { schemas: () => Array<{ name: string }> } }).tools
+        .schemas()
+        .map((schema) => schema.name)
+        .sort()
+      const allowed = new Set([
+        'watch_baseline',
+        'watch_diff',
+        'watch_report',
+        'watch_propose_fix',
+        'watch_timeline',
+        'watch_health',
+        'watch_apply_fix',
+      ])
+      const required = [...allowed].filter((name) => name !== 'watch_apply_fix')
+      const extra = tools.filter((name) => !allowed.has(name))
+      const missing = required.filter((name) => !tools.includes(name))
+      console.log(`nightwatch-selfcheck ${JSON.stringify({ tools, extra, missing })}`)
+      process.exit(extra.length > 0 || missing.length > 0 ? 1 : 0)
+    }, 1500)
+  }
 }

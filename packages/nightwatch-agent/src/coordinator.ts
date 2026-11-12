@@ -1,17 +1,21 @@
-import { verifyBundle, type BundleFinding, type NodeBundle } from './export.js'
+import { verifyBundle, type BundleCapabilities, type BundleFinding, type NodeBundle } from './export.js'
 
 /**
- * A small coordinator prototype: ingest signed bundles, verify their origin, dedupe by
- * (node id, finding id), and look for the same fact across nodes.
+ * A small coordinator prototype: only registered nodes may send bundles; each bundle is verified,
+ * deduped by (node id, finding id), and open findings are grouped by fact key across nodes.
  *
- * It is offline on purpose — transport, device registration and approvals come later. This is the
- * piece that answers "is this the same public key on two machines?" without copying raw evidence.
+ * Registration is an explicit owner action (`register`); ingesting from a node the owner has not
+ * registered is refused, so a fresh node cannot silently insert itself into the picture.
  */
 
 export interface CoordinatorNode {
   readonly publicKeyPem: string
   readonly firstSeen: number
   readonly lastSeen: number
+  readonly registeredAt: number
+  /** Highest bundle seq seen; lower seq means a stale delivery. */
+  readonly lastSeq: number
+  readonly capabilities: BundleCapabilities
   readonly lastRunAt?: number
   readonly lastHealth?: string
 }
@@ -32,6 +36,51 @@ export function emptyState(now: number): CoordinatorState {
   return { version: 1, nodes: {}, findings: {}, updatedAt: now }
 }
 
+export interface RegisterResult {
+  readonly ok: boolean
+  readonly reason?: string
+  readonly state: CoordinatorState
+  readonly nodeId: string
+  readonly alreadyRegistered: boolean
+}
+
+/** Explicit owner action: accept this node's public key before any finding from it is trusted. */
+export function registerNode(state: CoordinatorState, bundle: NodeBundle, now: number): RegisterResult {
+  const verdict = verifyBundle(bundle)
+  if (!verdict.ok) return { ok: false, reason: verdict.reason ?? '校验失败', state, nodeId: '', alreadyRegistered: false }
+
+  const payload = bundle.payload
+  const nodeId = payload.node.id
+  const existing = state.nodes[nodeId]
+  if (existing) {
+    if (existing.publicKeyPem !== payload.node.publicKeyPem) {
+      return { ok: false, reason: `节点 ${nodeId} 的公钥与已登记的不一致`, state, nodeId, alreadyRegistered: true }
+    }
+    return { ok: true, state, nodeId, alreadyRegistered: true }
+  }
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        [nodeId]: {
+          publicKeyPem: payload.node.publicKeyPem,
+          firstSeen: now,
+          lastSeen: now,
+          registeredAt: now,
+          lastSeq: 0,
+          capabilities: payload.capabilities,
+        },
+      },
+      updatedAt: now,
+    },
+    nodeId,
+    alreadyRegistered: false,
+  }
+}
+
 export interface IngestResult {
   readonly ok: boolean
   readonly reason?: string
@@ -39,33 +88,39 @@ export interface IngestResult {
   readonly nodeId: string
   readonly added: number
   readonly updated: number
+  readonly staleSeq: boolean
 }
 
-/** Verify, register the node, then upsert findings by (node, finding id). Replays are idempotent. */
+/** Upsert findings by (node, finding id) for a registered node. Replays are idempotent. */
 export function ingestBundle(state: CoordinatorState, bundle: NodeBundle, now: number): IngestResult {
   const verdict = verifyBundle(bundle)
-  if (!verdict.ok) return { ok: false, reason: verdict.reason ?? '校验失败', state, nodeId: '', added: 0, updated: 0 }
+  if (!verdict.ok) return { ok: false, reason: verdict.reason ?? '校验失败', state, nodeId: '', added: 0, updated: 0, staleSeq: false }
 
   const payload = bundle.payload
   const nodeId = payload.node.id
   const existing = state.nodes[nodeId]
-  if (existing && existing.publicKeyPem !== payload.node.publicKeyPem) {
-    return { ok: false, reason: `节点 ${nodeId} 的公钥与已登记的不一致`, state, nodeId, added: 0, updated: 0 }
+  if (!existing) {
+    return { ok: false, reason: `节点 ${nodeId} 未登记，先用 register 接受它的公钥`, state, nodeId, added: 0, updated: 0, staleSeq: false }
+  }
+  if (existing.publicKeyPem !== payload.node.publicKeyPem) {
+    return { ok: false, reason: `节点 ${nodeId} 的公钥与已登记的不一致`, state, nodeId, added: 0, updated: 0, staleSeq: false }
   }
 
   const latestRun = payload.runs.reduce<number | undefined>(
     (latest, run) => (latest === undefined || run.at > latest ? run.at : latest),
     undefined,
   )
-  const lastHealth = payload.runs.length > 0 ? payload.runs[payload.runs.length - 1]!.health : existing?.lastHealth
+  const lastHealth = payload.runs.length > 0 ? payload.runs[payload.runs.length - 1]!.health : existing.lastHealth
+  const staleSeq = payload.seq < existing.lastSeq
 
   const nodes: Record<string, CoordinatorNode> = {
     ...state.nodes,
     [nodeId]: {
-      publicKeyPem: payload.node.publicKeyPem,
-      firstSeen: existing?.firstSeen ?? now,
+      ...existing,
       lastSeen: now,
-      ...(latestRun !== undefined ? { lastRunAt: Math.max(existing?.lastRunAt ?? 0, latestRun) } : {}),
+      lastSeq: Math.max(existing.lastSeq, payload.seq),
+      capabilities: existing.capabilities,
+      ...(latestRun !== undefined ? { lastRunAt: Math.max(existing.lastRunAt ?? 0, latestRun) } : {}),
       ...(lastHealth ? { lastHealth } : {}),
     },
   }
@@ -89,7 +144,7 @@ export function ingestBundle(state: CoordinatorState, bundle: NodeBundle, now: n
     }
   }
 
-  return { ok: true, state: { version: 1, nodes, findings, updatedAt: now }, nodeId, added, updated }
+  return { ok: true, state: { version: 1, nodes, findings, updatedAt: now }, nodeId, added, updated, staleSeq }
 }
 
 export interface CorrelatedGroup {

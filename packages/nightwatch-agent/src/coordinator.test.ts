@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { correlate, emptyState, ingestBundle } from './coordinator.js'
+import { correlate, emptyState, ingestBundle, registerNode } from './coordinator.js'
 import { buildBundle } from './export.js'
 import { ensureIdentity } from './identity.js'
 import { WatchStore } from './store.js'
@@ -49,12 +49,20 @@ function nodeBundle(label: string) {
   } }
 }
 
-test('two nodes reporting the same fact key are correlated, and replays are idempotent', () => {
+test('registered nodes are correlated and replays are idempotent', () => {
   const a = nodeBundle('a')
   const b = nodeBundle('b')
   try {
     const now = at + 2000
     let state = emptyState(now)
+    const registeredA = registerNode(state, a.bundle, now)
+    assert.equal(registeredA.ok, true)
+    state = registeredA.state
+    const registeredB = registerNode(state, b.bundle, now)
+    assert.equal(registeredB.ok, true)
+    state = registeredB.state
+    assert.equal(registeredA.nodeId === registeredB.nodeId, false)
+
     const first = ingestBundle(state, a.bundle, now)
     assert.equal(first.ok, true)
     assert.equal(first.added, 1)
@@ -82,14 +90,19 @@ test('two nodes reporting the same fact key are correlated, and replays are idem
   }
 })
 
-test('a tampered bundle or a changed node key is refused', () => {
+test('an unregistered node, a tampered bundle or a changed key is refused', () => {
   const a = nodeBundle('a')
   try {
     const now = at + 2000
     const state = emptyState(now)
+
+    const unregistered = ingestBundle(state, a.bundle, now)
+    assert.equal(unregistered.ok, false)
+    assert.match(unregistered.reason ?? '', /未登记/)
+
     const tampered = JSON.parse(JSON.stringify(a.bundle)) as typeof a.bundle
     ;(tampered.payload.findings[0] as { title: string }).title = '被改过'
-    const rejected = ingestBundle(state, tampered, now)
+    const rejected = registerNode(state, tampered, now)
     assert.equal(rejected.ok, false)
     assert.match(rejected.reason ?? '', /签名/)
 
@@ -100,10 +113,13 @@ test('a tampered bundle or a changed node key is refused', () => {
           publicKeyPem: '-----BEGIN PUBLIC KEY-----\nnot-the-same\n-----END PUBLIC KEY-----\n',
           firstSeen: now,
           lastSeen: now,
+          registeredAt: now,
+          lastSeq: 0,
+          capabilities: a.bundle.payload.capabilities,
         },
       },
     }
-    const conflict = ingestBundle(known, a.bundle, now)
+    const conflict = registerNode(known, a.bundle, now)
     assert.equal(conflict.ok, false)
     assert.match(conflict.reason ?? '', /公钥/)
   } finally {

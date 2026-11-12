@@ -15,9 +15,13 @@
 //   node scripts/nightwatch.mjs export    signed cross-node summary (findings + health, no raw facts)
 //   node scripts/nightwatch.mjs verify    check a bundle signature
 //   node scripts/nightwatch.mjs ingest    add a bundle to a coordinator state file
+//   node scripts/nightwatch.mjs register  explicitly accept a node's public key (before ingest)
+//   node scripts/nightwatch.mjs serve     coordinator HTTP endpoint for signed bundles (local prototype)
+//   node scripts/nightwatch.mjs push      send a bundle to a coordinator endpoint
 //   node scripts/nightwatch.mjs correlate group open findings across nodes (same fact key)
+//   node scripts/nightwatch.mjs selfcheck boot the explicit minimal host and assert its tool list
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -25,8 +29,10 @@ import { parseEnv } from 'node:util'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const profile = 'nightwatch'
+const standaloneProfile = 'nightwatch-standalone'
 const dshBin = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 const bundleDir = join(root, 'packages', 'nightwatch-host')
+const standaloneDir = join(root, 'packages', 'nightwatch-standalone')
 
 /** The project's `.env` (gitignored), for this child process only. */
 function ownEnv() {
@@ -86,6 +92,52 @@ async function setup(at, { quiet = false } = {}) {
   if (!bundles.includes('@nightwatch/host')) {
     const run = start(at, ['plugin', '--profile', profile, 'add', `link:${bundleDir}`], { capture: quiet })
     if ((await run.done) !== 0) throw new Error(`installing @nightwatch/host failed:\n${run.output}`)
+  }
+}
+
+/** The minimal host: a hand-written profile whose whole tree is @nightwatch/standalone. */
+async function setupStandalone(at) {
+  const dir = join(at.home, 'profiles', standaloneProfile)
+  const manifest = join(dir, 'package.json')
+  if (!existsSync(manifest)) {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      manifest,
+      `${JSON.stringify({ name: 'dsh-profile-nightwatch-standalone', private: true, dsh: { profile: { bundles: ['@nightwatch/standalone'] } } }, null, 2)}\n`,
+      'utf8',
+    )
+  }
+  const installed = join(dir, 'node_modules', '@nightwatch', 'standalone', 'package.json')
+  if (!existsSync(installed)) {
+    const run = start(at, ['plugin', '--profile', standaloneProfile, 'add', `link:${standaloneDir}`], { capture: true })
+    if ((await run.done) !== 0) throw new Error(`installing @nightwatch/standalone failed:\n${run.output}`)
+  }
+}
+
+/** Boot the minimal host once and assert that only the watch_* tools are reachable. */
+async function selfcheck() {
+  const home = mkdtempSync(join(tmpdir(), 'nightwatch-selfcheck-'))
+  const at = place(home)
+  try {
+    await setupStandalone(at)
+    const gated = { ...at, env: { ...at.env, NIGHTWATCH_SELFCHECK: '1' } }
+    const run = start(gated, ['--profile', standaloneProfile], { capture: true })
+    const timedOut = new Promise((_, reject) => setTimeout(() => reject(new Error('selfcheck timed out after 60s')), 60_000))
+    let code
+    try {
+      code = await Promise.race([run.done, timedOut])
+    } finally {
+      if (!run.exited) run.child.kill()
+    }
+    const match = /nightwatch-selfcheck (\{.*\})/.exec(run.output)
+    if (!match) throw new Error(`selfcheck 没有输出结论：\n${run.output.split('\n').slice(-25).join('\n')}`)
+    const result = JSON.parse(match[1])
+    if (code !== 0 || result.extra.length > 0 || result.missing.length > 0) {
+      throw new Error(`selfcheck 失败（exit ${code}）：extra=[${result.extra.join(', ')}] missing=[${result.missing.join(', ')}]`)
+    }
+    console.log(`selfcheck passed — tools: ${result.tools.join(', ')}`)
+  } finally {
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
 }
 
@@ -220,7 +272,17 @@ async function exportBundle(home, days) {
     const identity = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'identity.js')).href)
     const exporter = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'export.js')).href)
     const nodeIdentity = identity.ensureIdentity(home)
-    const bundle = exporter.buildBundle(store, coreConfig(home), nodeIdentity, { now: Date.now(), days: Number(days ?? 7) })
+    const statePath = join(home, 'export-state.json')
+    const prior = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { seq: 0 }
+    const seq = Number(prior.seq ?? 0) + 1
+    const now = Date.now()
+    const bundle = exporter.buildBundle(store, coreConfig(home), nodeIdentity, {
+      now,
+      days: Number(days ?? 7),
+      seq,
+      platform: process.platform,
+    })
+    writeFileSync(statePath, `${JSON.stringify({ seq, lastExportAt: now }, null, 2)}\n`, 'utf8')
     console.log(JSON.stringify(bundle, null, 2))
   } finally {
     store.close()
@@ -253,6 +315,28 @@ async function ingestCommand(stateFile, bundleFile) {
   console.log(`已摄入 ${result.nodeId}：新增 ${result.added} 条、更新 ${result.updated} 条；状态 ${stateFile}`)
 }
 
+/** Explicit owner action: trust this node's public key before accepting its findings. */
+async function registerCommand(stateFile, bundleFile) {
+  const coordinator = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'coordinator.js')).href)
+  const now = Date.now()
+  const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : coordinator.emptyState(now)
+  const bundle = JSON.parse(readFileSync(bundleFile, 'utf8'))
+  const result = coordinator.registerNode(state, bundle, now)
+  if (!result.ok) {
+    console.error(`登记失败：${result.reason}`)
+    process.exitCode = 1
+    return
+  }
+  const temporary = `${stateFile}.tmp-${process.pid}`
+  writeFileSync(temporary, `${JSON.stringify(result.state, null, 2)}\n`, 'utf8')
+  renameSync(temporary, stateFile)
+  console.log(
+    result.alreadyRegistered
+      ? `节点 ${result.nodeId} 已登记（公钥一致）`
+      : `已登记节点 ${result.nodeId}（能力：${result.state.nodes[result.nodeId]?.capabilities.collectors.join('/')}；平台 ${result.state.nodes[result.nodeId]?.capabilities.platform}）`,
+  )
+}
+
 /** Group open findings by fact key and mark groups seen on more than one node. */
 async function correlateCommand(stateFile) {
   const coordinator = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'coordinator.js')).href)
@@ -270,6 +354,42 @@ async function correlateCommand(stateFile) {
     console.log(`${group.crossNode ? '[跨端] ' : ''}${group.key}（${group.kind}，${group.nodes.length} 个节点：${group.nodes.join(', ')}）`)
     for (const finding of group.findings) console.log(`  - ${finding.nodeId} [${finding.severity}] ${finding.title}（${finding.status}）`)
   }
+}
+
+/** Local coordinator endpoint: POST /v1/bundle, GET /v1/status. Not production TLS. */
+async function serveCommand(stateFile, port, host) {
+  const transport = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'transport.js')).href)
+  const server = await transport.startCoordinatorServer({
+    statePath: stateFile,
+    ...(port ? { port: Number(port) } : {}),
+    ...(host ? { host } : {}),
+  })
+  console.log(`coordinator listening ${server.url} (state ${stateFile})`)
+  await new Promise((resolve) => {
+    const stop = () => {
+      server.close().then(resolve, resolve)
+    }
+    process.on('SIGINT', stop)
+    process.on('SIGTERM', stop)
+  })
+}
+
+/** Send one bundle to a coordinator endpoint. */
+async function pushCommand(url, bundleFile) {
+  const bundle = JSON.parse(readFileSync(bundleFile, 'utf8'))
+  const target = `${url.replace(/\/+$/u, '')}/v1/bundle`
+  const response = await fetch(target, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(bundle),
+  })
+  const body = await response.json()
+  if (!response.ok || !body.ok) {
+    console.error(`推送失败（${response.status}）：${body.reason ?? '未知'}`)
+    process.exitCode = 1
+    return
+  }
+  console.log(`已推送 ${body.nodeId}：新增 ${body.added} 条、更新 ${body.updated} 条${body.staleSeq ? '（旧序号）' : ''}`)
 }
 
 /**
@@ -330,6 +450,8 @@ try {
     process.exitCode = await start(at, ['--profile', profile, '--port', port, ...process.argv.slice(3)]).done
   } else if (command === 'smoke') {
     await smoke()
+  } else if (command === 'selfcheck') {
+    await selfcheck()
   } else if (command === 'tick' || command === 'baseline') {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
@@ -361,10 +483,24 @@ try {
     const bundleFile = process.argv[4]
     if (!stateFile || !bundleFile) throw new Error('ingest 需要 <state.json> <bundle.json>')
     await ingestCommand(resolve(stateFile), resolve(bundleFile))
+  } else if (command === 'register') {
+    const stateFile = process.argv[3]
+    const bundleFile = process.argv[4]
+    if (!stateFile || !bundleFile) throw new Error('register 需要 <state.json> <bundle.json>')
+    await registerCommand(resolve(stateFile), resolve(bundleFile))
   } else if (command === 'correlate') {
     const stateFile = process.argv[3]
     if (!stateFile) throw new Error('correlate 需要 <state.json>')
     await correlateCommand(resolve(stateFile))
+  } else if (command === 'serve') {
+    const stateFile = process.argv[3]
+    if (!stateFile) throw new Error('serve 需要 <state.json> [port] [host]')
+    await serveCommand(resolve(stateFile), process.argv[4], process.argv[5])
+  } else if (command === 'push') {
+    const url = process.argv[3]
+    const bundleFile = process.argv[4]
+    if (!url || !bundleFile) throw new Error('push 需要 <url> <bundle.json>')
+    await pushCommand(url, resolve(bundleFile))
   } else {
     throw new Error(`unknown command ${command}`)
   }

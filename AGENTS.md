@@ -23,15 +23,16 @@
 | 东西 | 位置 |
 |---|---|
 | agent | `packages/nightwatch-agent`（`@nightwatch/agent`） |
-| 宿主 bundle | `packages/nightwatch-host`（`@nightwatch/host`，只装 guard + agent） |
+| 宿主 bundle | `packages/nightwatch-host`（`@nightwatch/host`，只装 guard + agent，挂 web profile） |
+| 最小宿主 | `packages/nightwatch-standalone`（`@nightwatch/standalone`，完整显式树；无 shell/session/模型/Web） |
 | 启动器 | `scripts/nightwatch.mjs`（profile `nightwatch`，home `.nightwatch-home/`，端口 3091） |
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-12）：`pnpm test` **65 通过**；`node scripts/nightwatch.mjs smoke` 通过；
-`tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `ingest` / `correlate` 跑通；
+最近验证（2026-11-12）：`pnpm test` **66 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
+`tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate` 跑通；
 `inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
 
 ## 代码地图
@@ -50,6 +51,7 @@
 | `src/identity.ts` | 节点身份：Ed25519 密钥对、节点 ID = 公钥指纹；私钥只在本机 |
 | `src/export.ts` | 跨端签名摘要：run/发现/健康，**不含 facts/evidence/detail** |
 | `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
+| `src/transport.ts` | 协调端本地 HTTP 原型（`/v1/bundle`、`/v1/status`）；非 TLS，信任靠登记+签名 |
 | `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
 | `src/propose.ts` | 修复计划（改哪行、风险、回滚、验证） |
 | `src/apply.ts` | 应用计划（仅三种 SSH 改行；备份/校验/回滚） |
@@ -83,9 +85,10 @@
      只读命令 `health` / `timeline` 走只读视图，可在 daemon 运行时用；`tick` / `baseline` 需要写锁。
    - ✅ **SSH 生效配置**：Linux 先跑 `sshd -T`（Include / Match / 默认值已解析），失败才回退主文件。
    - ✅ **M1 地基**：节点身份（Ed25519，ID=公钥指纹）+ 签名摘要（run/发现/健康，不含 facts/detail），
-     CLI `export` / `verify`；协调端原型 `ingest` / `correlate` 已能跨节点按事实 key 关联。
-3. **M0 宿主落地**：按 `m0-host-research.md` §7 的显式组合替换 web profile，补启动自检。
-4. M1 多端：设备登记、受限同步、审批等 7 天验收通过后再开；osquery / Sigma 继续后置。
+     CLI `export` / `verify`；协调端 `register` 显式登记、`ingest` 拒绝未登记节点、`correlate` 跨端关联；
+     bundle 带 `seq` 与 `capabilities`。
+3. **M0 落地**：✅ `@nightwatch/standalone`（完整显式树）+ `nightwatch selfcheck`（工具面只允许 `watch_*`）。
+4. M1 多端：本地 HTTP 传输原型已完成（`serve` / `push`，非 TLS）；TLS/部署方式、审批通道、真实两台主机联动待做；osquery / Sigma 继续后置。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
 风险恢复与复发都能解释；删 SQLite 后结果一致；巡检不需要云模型或系统写权限。
@@ -107,6 +110,7 @@ pnpm install
 npx tsc -b
 pnpm test
 node scripts/nightwatch.mjs smoke
+node scripts/nightwatch.mjs selfcheck        # 启动最小宿主，断言工具面只有 watch_*
 node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线（有盲区时拒绝）
 node scripts/nightwatch.mjs tick <home>       # 无模型巡检：0 正常 / 2 部分 / 1 失败
 node scripts/nightwatch.mjs health <home>     # 最近成功、盲区、数据过期、未运行项
@@ -115,6 +119,8 @@ node scripts/nightwatch.mjs daemon <home> [minutes]       # 内置调度（前�
 node scripts/nightwatch.mjs export <home> [days]          # 签名摘要（findings/health，无原始事实）
 node scripts/nightwatch.mjs verify <bundle.json>          # 校验摘要签名与节点 ID
 node scripts/nightwatch.mjs ingest <state.json> <bundle.json>  # 协调端：验签并幂等摄入
+node scripts/nightwatch.mjs serve <state.json> [port] [host]   # 协调端本地 HTTP（非 TLS）
+node scripts/nightwatch.mjs push <url> <bundle.json>           # 推送 bundle 到协调端
 node scripts/nightwatch.mjs correlate <state.json>        # 按事实 key 跨节点关联
 node scripts/nightwatch.mjs web
 node scripts/nightwatch.mjs dump
@@ -122,11 +128,12 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（65）、smoke 都是好的；核心模块不依赖 DSH，`tick` / `health` / `daemon` / `export` / `ingest` 可无模型运行。
+- 代码、测试（66）、smoke / selfcheck 都是好的；核心模块不依赖 DSH，`tick` / `health` / `daemon` / `export` / `ingest` 可无模型运行。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
-- M1 原型：节点身份 + 签名摘要 + 协调端摄入/关联；设备登记、传输、审批待验收后再开。
+- M0 已落地：`@nightwatch/standalone` + `selfcheck`，最小宿主工具面只有 `watch_*`。
+- M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
 - 首台验收机由内置 `daemon` 连续巡检（2026-11-10 → 11-17）；只读 health/timeline 可在 daemon 运行时用。
-- 下一步：M0 宿主显式组合与启动自检；7 天验收通过后再评估多端；别先接 osquery。
+- 下一步：M1 的 TLS/部署方式与审批通道；7 天验收到期后复盘；别先接 osquery。
 
 ---
 

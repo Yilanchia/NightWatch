@@ -38,9 +38,19 @@ export interface BundleHealth {
   readonly skipped: readonly string[]
 }
 
+/** What this node is able to watch, so the coordinator can say "coverage differs" instead of guessing. */
+export interface BundleCapabilities {
+  readonly platform: string
+  readonly collectors: readonly string[]
+  readonly backupPaths: boolean
+}
+
 export interface BundlePayload {
   readonly version: 1
+  /** Monotonic export counter; lets the coordinator notice stale or replayed deliveries. */
+  readonly seq: number
   readonly node: { readonly id: string; readonly publicKeyPem: string }
+  readonly capabilities: BundleCapabilities
   readonly generatedAt: number
   readonly window: { readonly from: number; readonly to: number }
   readonly runs: readonly BundleRun[]
@@ -66,11 +76,19 @@ export interface BundleOptions {
   readonly now: number
   /** Window for runs and resolved findings; defaults to 7 days. */
   readonly days?: number
+  /** Export counter; the CLI keeps it in export-state.json. */
+  readonly seq?: number
+  /** Defaults to process.platform. */
+  readonly platform?: string
 }
 
 export function buildBundle(store: WatchStore, config: WatchConfig, identity: NodeIdentity, options: BundleOptions): NodeBundle {
   const span = Math.max(1, options.days ?? 7) * 86_400_000
   const from = options.now - span
+  const collectors: string[] = []
+  if (config.ports) collectors.push('ports')
+  if (config.ssh) collectors.push('ssh')
+  if (config.backup && config.backupPaths.length > 0) collectors.push('backup')
 
   const runs: BundleRun[] = store.runsSince(from, options.now).map((run) => ({
     id: run.id,
@@ -115,7 +133,13 @@ export function buildBundle(store: WatchStore, config: WatchConfig, identity: No
   const health = inspectionHealth(store, config, options.now)
   const payload: BundlePayload = {
     version: 1,
+    seq: options.seq ?? 1,
     node: { id: identity.id, publicKeyPem: identity.publicKeyPem },
+    capabilities: {
+      platform: options.platform ?? process.platform,
+      collectors,
+      backupPaths: config.backupPaths.length > 0,
+    },
     generatedAt: options.now,
     window: { from, to: options.now },
     runs,

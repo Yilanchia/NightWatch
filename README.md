@@ -100,8 +100,12 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs daemon <home> [minutes]` | 内置调度：前台常驻，单实例写锁，重启补跑一次 |
 | `node scripts/nightwatch.mjs export <home> [days]` | 输出签名摘要（发现 + 健康，不含原始事实） |
 | `node scripts/nightwatch.mjs verify <bundle.json>` | 校验摘要签名与节点 ID |
-| `node scripts/nightwatch.mjs ingest <state.json> <bundle.json>` | 协调端：验签并幂等摄入 |
+| `node scripts/nightwatch.mjs ingest <state.json> <bundle.json>` | 协调端：验签并幂等摄入（节点须先登记） |
+| `node scripts/nightwatch.mjs register <state.json> <bundle.json>` | 显式登记节点公钥与能力 |
+| `node scripts/nightwatch.mjs serve <state.json> [port] [host]` | 协调端本地 HTTP（原型，非 TLS） |
+| `node scripts/nightwatch.mjs push <url> <bundle.json>` | 把 bundle 推给协调端 |
 | `node scripts/nightwatch.mjs correlate <state.json>` | 按事实 key 跨节点关联 |
+| `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主，断言工具面只有 `watch_*` |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
 
 ## 代码结构

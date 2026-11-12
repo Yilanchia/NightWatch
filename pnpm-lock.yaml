@@ -45,6 +45,15 @@ importers:
         specifier: workspace:*
         version: link:../nightwatch-agent
 
+  packages/nightwatch-standalone:
+    dependencies:
+      '@fairy/guard':
+        specifier: link:../../../fairy-framework/packages/guard/fairy-guard
+        version: link:../../../fairy-framework/packages/guard/fairy-guard
+      '@nightwatch/agent':
+        specifier: workspace:*
+        version: link:../nightwatch-agent
+
 packages:
 
   '@agentclientprotocol/sdk@1.4.0':

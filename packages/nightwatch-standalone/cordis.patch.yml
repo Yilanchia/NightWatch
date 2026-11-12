@@ -1,0 +1,45 @@
+# Nightwatch standalone host: the whole Cordis tree, explicitly.
+#
+# It does not layer over dsh-base. It has no shell, no file tools, no plugin manager, no session,
+# no model adapter and no web app. The only tools are the watch_* ones from @nightwatch/agent.
+# Paths and switches come from the same NIGHTWATCH_* environment as the CLI.
+
+- insert:
+    - id: nightwatch-timer
+      name: '@deepseek-ai/cordis-plugin-timer'
+
+    - id: nightwatch-system-prompt
+      name: '@deepseek-ai/dsh-system-prompt'
+      config:
+        includeHarnessIdentity: false
+        includeRuntimeContext: false
+        personaPrefix: 'Nightwatch: a read-only observer of this machine.'
+
+    - id: nightwatch-tools
+      name: '@deepseek-ai/dsh-tools'
+      config:
+        mode: native
+
+    - id: nightwatch-user-questions
+      name: '@deepseek-ai/dsh-user-questions'
+
+    - id: nightwatch-guard
+      name: '@fairy/guard'
+      config:
+        auditPath: !!js process.env.NIGHTWATCH_AUDIT_PATH
+        ask: [destructive, outward, money]
+        askTimeoutMs: 5000
+
+    - id: nightwatch-agent
+      name: '@nightwatch/agent'
+      config:
+        evidencePath: !!js process.env.NIGHTWATCH_EVIDENCE_PATH
+        databasePath: !!js process.env.NIGHTWATCH_DB_PATH
+        reportDir: !!js process.env.NIGHTWATCH_REPORT_DIR
+        ports: !!js process.env.NIGHTWATCH_PORTS !== '0'
+        ssh: !!js process.env.NIGHTWATCH_SSH !== '0'
+        backup: !!js process.env.NIGHTWATCH_BACKUP !== '0'
+        backupPaths: !!js (process.env.NIGHTWATCH_BACKUP_PATHS ?? '').split(';').filter(Boolean)
+        backupStaleHours: !!js Number(process.env.NIGHTWATCH_BACKUP_STALE_HOURS ?? 36)
+        observationValidHours: !!js Number(process.env.NIGHTWATCH_VALID_HOURS ?? 26)
+        applyFix: !!js process.env.NIGHTWATCH_APPLY_FIX === '1'
