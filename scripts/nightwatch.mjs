@@ -143,7 +143,7 @@ async function selfcheck() {
     console.log(`selfcheck passed — tools: ${result.tools.join(', ')}`)
     console.log(`  工具面：只有 watch_* 只读工具，危险能力可达 ${dangerous.length ? dangerous.join('、') : '无'}`)
     console.log(`  强制拒绝门：${result.gate.pass ? '生效（destructive 被挡下，工具体未执行）' : '未生效'}`)
-    console.log(`  guard 名称判定盲区：${result.guardNameBlind ? '存在——routine 名的写操作未被拦（见实施文档，需真正的策略决策点）' : '本轮未复现'}`)
+    console.log(`  guard 名称判定盲区：${result.guardNameBlind ? '存在——routine 名的写操作未被拦（需 PDP）' : '已关闭——PDP 按动作拦下了 routine 名写工具'}`)
   } finally {
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }

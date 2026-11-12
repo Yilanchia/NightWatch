@@ -43,3 +43,5 @@
         backupStaleHours: !!js Number(process.env.NIGHTWATCH_BACKUP_STALE_HOURS ?? 36)
         observationValidHours: !!js Number(process.env.NIGHTWATCH_VALID_HOURS ?? 26)
         applyFix: !!js process.env.NIGHTWATCH_APPLY_FIX === '1'
+        # The headless core is where agent tools live; keep the name-blindness gap closed.
+        pdp: true

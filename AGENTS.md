@@ -31,8 +31,8 @@
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-13）：`pnpm test` **73 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
-`selfcheck` 现在不只验工具名，还真的 dispatch 一个 destructive 工具验证**强制拒绝门**（被挡且工具体未执行）；
+最近验证（2026-11-12）：`pnpm test` **77 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
+`selfcheck` 真实 dispatch destructive 工具（被挡且工具体未执行），并验证 **PDP** 关闭 guard 的名称盲区；
 `tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate` 跑通；
 `inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
 
@@ -51,6 +51,8 @@
 | `src/time.ts` | 本地时间格式化（报告/时间线/健康统一用主机本地时间，不是 UTC） |
 | `src/identity.ts` | 节点身份：Ed25519 密钥对、节点 ID = 公钥指纹；私钥只在本机 |
 | `src/export.ts` | 跨端签名摘要：run/发现/健康，**不含 facts/evidence/detail** |
+| `src/pdp.ts` | 插件级策略决策点：只放行显式声明的只读动作；未声明/write/需审批一律拒绝 |
+| `src/selfcheck.ts` | 强制力探针：真实 dispatch 验证工具面、destructive 拒绝门、名称盲区 |
 | `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
 | `src/transport.ts` | 协调端本地 HTTP 原型（`/v1/bundle`、`/v1/status`）；非 TLS，信任靠登记+签名 |
 | `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
@@ -88,10 +90,9 @@
    - ✅ **M1 地基**：节点身份（Ed25519，ID=公钥指纹）+ 签名摘要（run/发现/健康，不含 facts/detail），
      CLI `export` / `verify`；协调端 `register` 显式登记、`ingest` 拒绝未登记节点、`correlate` 跨端关联；
      bundle 带 `seq` 与 `capabilities`。
-3. **M0 落地**：✅ `@nightwatch/standalone`（完整显式树）+ `nightwatch selfcheck`。selfcheck 已从"只验工具名"
-   升级为**强制力探针**：真实 dispatch 一个 destructive 工具，验证 `tools/pre-execute` 拒绝门生效（被挡且工具体未执行），
-   并记录 guard 的名称判定盲区。下一步（agent 介入 / 改 DSH）按 `docs/强制力探针与DSH改造-实施文档.md`：
-   先出口投影探针 → analyst+investigator 插件 → 策略决策点 PDP（能插件就插件，封不住才最小补丁）。
+3. **M0 落地**：✅ `@nightwatch/standalone` + `selfcheck`。selfcheck 已是**强制力探针**（真实 dispatch），
+   且最小宿主装了 **PDP**（`pdp.ts`）：只放行显式声明的只读动作，routine 名写探针被拒（`guardNameBlind=false`）。
+   下一步按 `docs/强制力探针与DSH改造-实施文档.md`：A 出口投影探针 → B analyst+investigator → C 的审批元数据/内核验证。
 4. M1 多端：本地 HTTP 传输原型已完成（`serve` / `push`，非 TLS）；TLS/部署方式、审批通道、真实两台主机联动待做；osquery / Sigma 继续后置。
 
 阶段完成条件：同一台机器连续跑 7 天，每天有成功或明确失败记录；中断、跨日、重复运行、
@@ -114,7 +115,7 @@ pnpm install
 npx tsc -b
 pnpm test
 node scripts/nightwatch.mjs smoke
-node scripts/nightwatch.mjs selfcheck        # 启动最小宿主，验工具面只有 watch_* + 强制拒绝门生效（见 docs/强制力探针与DSH改造-实施文档.md）
+node scripts/nightwatch.mjs selfcheck        # 强制力探针 + PDP：工具面 / 拒绝门 / 名称盲区（见 docs/强制力探针与DSH改造-实施文档.md）
 node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线（有盲区时拒绝）
 node scripts/nightwatch.mjs tick <home>       # 无模型巡检：0 正常 / 2 部分 / 1 失败
 node scripts/nightwatch.mjs health <home>     # 最近成功、盲区、数据过期、未运行项
@@ -132,12 +133,12 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（66）、smoke / selfcheck 都是好的；核心模块不依赖 DSH，`tick` / `health` / `daemon` / `export` / `ingest` 可无模型运行。
+- 代码、测试（77）、smoke / selfcheck 都是好的；核心模块不依赖 DSH，`tick` / `health` / `daemon` / `export` / `ingest` 可无模型运行。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
-- M0 已落地：`@nightwatch/standalone` + `selfcheck`，最小宿主工具面只有 `watch_*`。
+- M0 已落地：`@nightwatch/standalone` + 强制力探针 + 插件级 PDP（未声明/write/需审批一律拒绝；名称盲区已关闭）。
 - M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
 - 首台验收机由内置 `daemon` 连续巡检（2026-11-10 → 11-17）；只读 health/timeline 可在 daemon 运行时用。
-- 下一步：M1 的 TLS/部署方式与审批通道；7 天验收到期后复盘；别先接 osquery。
+- 下一步：按实施文档做 A 出口投影探针 → B analyst+investigator；M1 的 TLS/审批通道随后；别先接 osquery。
 
 ---
 

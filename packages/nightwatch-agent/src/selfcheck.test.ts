@@ -28,8 +28,9 @@ test('harmless read-only / routine tools are not flagged', () => {
   }
 })
 
-test('pass requires a clean surface and a working deny gate', () => {
-  assert.equal(selfcheckPassed({ tools: [], extra: [], missing: [], dangerousReachable: [], gate: okGate, guardNameBlind: true }), true)
+test('pass requires a clean surface, a working deny gate and no name blindness', () => {
+  assert.equal(selfcheckPassed({ tools: [], extra: [], missing: [], dangerousReachable: [], gate: okGate, guardNameBlind: false }), true)
+  assert.equal(selfcheckPassed({ tools: [], extra: [], missing: [], dangerousReachable: [], gate: okGate, guardNameBlind: true }), false)
 })
 
 test('any surface defect or a bypassed gate fails the check', () => {
@@ -40,7 +41,8 @@ test('any surface defect or a bypassed gate fails the check', () => {
   assert.equal(selfcheckPassed({ ...clean, gate: badGate }), false)
 })
 
-test('guardNameBlind is informational and does not change the pass decision', () => {
+test('closing the name blindness (PDP) is required for a pass', () => {
   const base = { tools: [], extra: [], missing: [], dangerousReachable: [], gate: okGate }
-  assert.equal(selfcheckPassed({ ...base, guardNameBlind: true }), selfcheckPassed({ ...base, guardNameBlind: false }))
+  assert.equal(selfcheckPassed({ ...base, guardNameBlind: true }), false)
+  assert.equal(selfcheckPassed({ ...base, guardNameBlind: false }), true)
 })

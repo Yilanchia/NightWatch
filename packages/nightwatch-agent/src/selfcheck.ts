@@ -15,9 +15,9 @@ import { join } from 'node:path'
  *     (shell, file write, fs, run_code, plugin/mcp) mounted or hidden-but-reachable?
  *  2. gate — when a destructive-named tool is actually dispatched with nobody to approve it, does
  *     the mandatory deny gate stop it *before the body runs*? (fail-closed)
- *  3. name-blindness — a routine-NAMED tool that writes a file is not stopped, because guard
- *     judges by name/regex. This is reported, not failed: it is the evidence that a real
- *     policy-decision point (not a name net) is needed before any write path is opened.
+ *  3. name-blindness — a routine-NAMED tool that writes a file. Without a policy layer guard lets
+ *     it through, because it judges by name/regex. The pass requires this to be denied: the
+ *     standalone host installs the PDP (pdp.ts), which decides from a declared action instead.
  *
  * It registers throwaway probe tools, runs them, and disposes them; every side effect is a canary
  * file inside the throwaway self-check home.
@@ -72,7 +72,7 @@ export interface SelfcheckReport {
   readonly dangerousReachable: string[]
   /** The mandatory deny gate stopped a destructive dispatch before its body ran. */
   readonly gate: GateResult
-  /** Informational: a routine-named writer was NOT stopped (guard judges by name). */
+  /** A routine-named writer reached its body: the policy layer is missing or blind. */
   readonly guardNameBlind: boolean
   readonly pass: boolean
 }
@@ -83,7 +83,8 @@ export function selfcheckPassed(report: Omit<SelfcheckReport, 'pass'>): boolean 
     report.extra.length === 0 &&
     report.missing.length === 0 &&
     report.dangerousReachable.length === 0 &&
-    report.gate.pass
+    report.gate.pass &&
+    !report.guardNameBlind
   )
 }
 

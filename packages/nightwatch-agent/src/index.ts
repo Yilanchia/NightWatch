@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { dirname, isAbsolute } from 'node:path'
+import { isAbsolute, dirname } from 'node:path'
+import { installPolicy } from './pdp.js'
 import { WatchStore } from './store.js'
 import { registerTools, type WatchConfig } from './tools.js'
 
@@ -109,6 +110,11 @@ export interface Config {
    * can edit sshd_config until the owner explicitly asks for it.
    */
   readonly applyFix: boolean
+  /**
+   * Install the policy decision point: only explicitly declared read-only tools are allowed;
+   * unknown, write and approval-required tools are denied before their body runs.
+   */
+  readonly pdp: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -124,6 +130,7 @@ export const Config: z<Config> = z.object({
   sshdConfig: z.string().description('sshd_config path; platform default when absent.'),
   authorizedKeys: z.string().description('authorized_keys path; ~/.ssh/authorized_keys when absent.'),
   applyFix: z.boolean().default(false).description('Register watch_apply_fix. Keep it off unless the owner explicitly wants repairs.'),
+  pdp: z.boolean().default(false).description('Install the policy decision point: deny tools without a declared read-only action.'),
 })
 
 export function apply(ctx: Context, config: Config): void {
@@ -150,6 +157,7 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   registerTools(ctx, { store, config: watchConfig })
+  if (config.pdp) ctx.effect(() => installPolicy(ctx), 'nightwatch.pdp')
   ctx.effect(() => () => store.close(), 'nightwatch.store')
 
   const enabled = [config.ports ? 'ports' : '', config.ssh ? 'ssh' : '', config.backup ? 'backup' : ''].filter(Boolean)

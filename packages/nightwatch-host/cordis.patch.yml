@@ -28,3 +28,5 @@
         observationValidHours: !!js Number(process.env.NIGHTWATCH_VALID_HOURS ?? 26)
         # Off by default: the executor is only registered when the owner explicitly enables it.
         applyFix: !!js process.env.NIGHTWATCH_APPLY_FIX === '1'
+        # The interactive host keeps the framework tools; PDP would deny them, so it stays off.
+        pdp: false
