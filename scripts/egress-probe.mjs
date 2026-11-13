@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Egress projection probe (implementation doc task A).
 //
-// Boots an analyst-style host (headless app + @nightwatch/host), points the model adapter at a local
+// Boots the analyst composition (headless app + @nightwatch/analyst), points the model adapter at a local
 // fake Messages endpoint, seeds one canary into a finding, and has the fake model ask for
 // `watch_report`. Every outbound request body is captured. The probe passes only if:
 //   - with projection enabled, no request contains the canary;
@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshBin = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-const hostDir = join(root, 'packages', 'nightwatch-host')
+const hostDir = join(root, 'packages', 'nightwatch-analyst')
 const profile = 'nw-analyst'
 const CANARY = 'NW-CANARY-7f3a9c'
 
@@ -143,6 +143,10 @@ function runAnalyst(dshHome, nwHome, port, projection) {
     NIGHTWATCH_EVIDENCE_PATH: join(nwHome, 'watch.jsonl'),
     NIGHTWATCH_DB_PATH: join(nwHome, 'watch.db'),
     NIGHTWATCH_REPORT_DIR: join(nwHome, 'reports'),
+    NIGHTWATCH_NOTE_PATH: join(nwHome, 'investigations.jsonl'),
+    NIGHTWATCH_BUDGET_CALLS: '10',
+    NIGHTWATCH_BUDGET_MINUTES: '5',
+    NIGHTWATCH_BUDGET_BYTES: '262144',
     NIGHTWATCH_AUDIT_PATH: join(nwHome, 'guard-audit.jsonl'),
     NIGHTWATCH_PORTS: '0',
     NIGHTWATCH_SSH: '0',

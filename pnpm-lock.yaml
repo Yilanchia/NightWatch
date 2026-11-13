@@ -36,11 +36,29 @@ importers:
         specifier: 5.8.3
         version: 5.8.3
 
+  packages/nightwatch-analyst:
+    dependencies:
+      '@fairy/guard':
+        specifier: link:../../../fairy-framework/packages/guard/fairy-guard
+        version: link:../../../fairy-framework/packages/guard/fairy-guard
+      '@nightwatch/agent':
+        specifier: workspace:*
+        version: link:../nightwatch-agent
+      '@nightwatch/investigator':
+        specifier: workspace:*
+        version: link:../nightwatch-investigator
+
   packages/nightwatch-host:
     dependencies:
       '@fairy/guard':
         specifier: link:../../../fairy-framework/packages/guard/fairy-guard
         version: link:../../../fairy-framework/packages/guard/fairy-guard
+      '@nightwatch/agent':
+        specifier: workspace:*
+        version: link:../nightwatch-agent
+
+  packages/nightwatch-investigator:
+    dependencies:
       '@nightwatch/agent':
         specifier: workspace:*
         version: link:../nightwatch-agent

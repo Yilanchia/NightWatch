@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./investigator": {
+      "types": "./dist/investigator.d.ts",
+      "import": "./dist/investigator.js"
     }
   },
   "files": [

@@ -5,7 +5,8 @@ import { decide, policyGuard, WATCH_ACTIONS } from './pdp.js'
 test('declared read-only watch tools are allowed', () => {
   for (const name of Object.keys(WATCH_ACTIONS)) {
     const decision = decide({ name })
-    if (WATCH_ACTIONS[name]!.operation === 'read') {
+    const operation = WATCH_ACTIONS[name]!.operation
+    if (operation === 'read' || operation === 'note') {
       assert.equal(decision.allow, true, name)
     } else {
       assert.equal(decision.allow, false, name)

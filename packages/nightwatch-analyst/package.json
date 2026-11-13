@@ -1,0 +1,23 @@
+{
+  "name": "@nightwatch/analyst",
+  "version": "0.1.0",
+  "description": "Nightwatch analyst bundle: read-only tools plus the bounded investigator. Layered over a headless profile; no shell access is granted to the model by design.",
+  "private": true,
+  "type": "module",
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "dsh": "0.2.1-rc.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@fairy/guard": "link:../../../fairy-framework/packages/guard/fairy-guard",
+    "@nightwatch/agent": "workspace:*",
+    "@nightwatch/investigator": "workspace:*"
+  }
+}

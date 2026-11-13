@@ -23,7 +23,7 @@
 
 ## 现状（2026-11-12，评审后 + 首台验收机）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**跨端摘要与协调端原型**（节点身份 + `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate`，证据不出节点）；**最小宿主** `@nightwatch/standalone` + 强制力探针 + 插件级 PDP（只放行显式声明的只读动作）。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**跨端摘要与协调端原型**（节点身份 + `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate`，证据不出节点）；**最小宿主** `@nightwatch/standalone` + 强制力探针 + 插件级 PDP；**有界调查** `@nightwatch/analyst` + investigator（预算、UNTRUSTED 前缀、推断注释）。
 
 **首台 Linux 验收机**已上线（`NODE_A_IP`，Ubuntu 22.04），内置 `daemon` 每 24h 巡检，7 天观察从 2026-11-10 开始。部署与验收点见 [docs/服务器验收-2026-11-10.md](docs/服务器验收-2026-11-10.md)。
 
@@ -105,6 +105,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs serve <state.json> [port] [host]` | 协调端本地 HTTP（原型，非 TLS） |
 | `node scripts/nightwatch.mjs push <url> <bundle.json>` | 把 bundle 推给协调端 |
 | `node scripts/nightwatch.mjs correlate <state.json>` | 按事实 key 跨节点关联 |
+| `node scripts/nightwatch.mjs analyst <home> "<任务>"` | 有界只读调查（analyst bundle：预算 + 推断注释） |
 | `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主：强制力探针（工具面 / 拒绝门 / 名称盲区）+ PDP |
 | `node scripts/egress-probe.mjs` | 出口投影探针：假模型端点 + canary，正反两组 |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |

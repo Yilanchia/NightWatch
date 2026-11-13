@@ -14,7 +14,7 @@ import type { ToolExecution } from '@deepseek-ai/dsh-tools'
  * than trusted.
  */
 
-export type Operation = 'read' | 'write' | 'network'
+export type Operation = 'read' | 'write' | 'network' | 'note'
 
 export interface ToolAction {
   readonly tool: string
@@ -33,6 +33,8 @@ export const WATCH_ACTIONS: Readonly<Record<string, ToolAction>> = {
   watch_propose_fix: { tool: 'watch_propose_fix', operation: 'read', resources: ['findings'], approval: 'none' },
   // Registered only when the owner enables it; always needs the owner's approval.
   watch_apply_fix: { tool: 'watch_apply_fix', operation: 'write', resources: ['sshd_config'], approval: 'owner' },
+  // Local inference annotations only; never part of the evidence log.
+  watch_investigate_note: { tool: 'watch_investigate_note', operation: 'note', resources: ['investigation-notes'], approval: 'none' },
 }
 
 export interface PolicyDecision {
@@ -46,7 +48,7 @@ export function decide(execution: { readonly name: string }, actions: Readonly<R
   if (!action) {
     return { allow: false, reason: `PDP: 未声明动作的工具「${execution.name}」被拒绝（fail-closed）` }
   }
-  if (action.operation !== 'read') {
+  if (action.operation !== 'read' && action.operation !== 'note') {
     return { allow: false, reason: `PDP: 「${execution.name}」是 ${action.operation} 动作，需要主人审批；当前未实现` }
   }
   if (action.approval !== 'none') {

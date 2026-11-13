@@ -1,0 +1,11 @@
+{
+  "name": "@nightwatch/investigator",
+  "version": "0.1.0",
+  "description": "Plugin entry for Nightwatch's bounded read-only investigation (re-exports @nightwatch/agent/investigator).",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "dependencies": {
+    "@nightwatch/agent": "workspace:*"
+  }
+}

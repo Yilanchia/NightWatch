@@ -20,6 +20,7 @@
 //   node scripts/nightwatch.mjs push      send a bundle to a coordinator endpoint
 //   node scripts/nightwatch.mjs correlate group open findings across nodes (same fact key)
 //   node scripts/nightwatch.mjs selfcheck boot the explicit minimal host and assert its tool list
+//   node scripts/nightwatch.mjs analyst   run a bounded, read-only investigation with a model
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,9 +31,11 @@ import { parseEnv } from 'node:util'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const profile = 'nightwatch'
 const standaloneProfile = 'nightwatch-standalone'
+const analystProfile = 'nightwatch-analyst'
 const dshBin = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 const bundleDir = join(root, 'packages', 'nightwatch-host')
 const standaloneDir = join(root, 'packages', 'nightwatch-standalone')
+const analystDir = join(root, 'packages', 'nightwatch-analyst')
 
 /** The project's `.env` (gitignored), for this child process only. */
 function ownEnv() {
@@ -112,6 +115,36 @@ async function setupStandalone(at) {
     const run = start(at, ['plugin', '--profile', standaloneProfile, 'add', `link:${standaloneDir}`], { capture: true })
     if ((await run.done) !== 0) throw new Error(`installing @nightwatch/standalone failed:\n${run.output}`)
   }
+}
+
+async function setupAnalyst(at) {
+  const dir = join(at.home, 'profiles', analystProfile)
+  const manifest = join(dir, 'package.json')
+  if (!existsSync(manifest)) {
+    const run = start(at, ['--profile', analystProfile, '--from-default-profile', 'headless', '--dump-config'], { capture: true })
+    if ((await run.done) !== 0) throw new Error(`creating the analyst profile failed:\n${run.output}`)
+  }
+  const installed = join(dir, 'node_modules', '@nightwatch', 'analyst', 'package.json')
+  if (!existsSync(installed)) {
+    const run = start(at, ['plugin', '--profile', analystProfile, 'add', `link:${analystDir}`], { capture: true })
+    if ((await run.done) !== 0) throw new Error(`installing @nightwatch/analyst failed:\n${run.output}`)
+  }
+}
+
+/** Run one bounded, read-only investigation. The deterministic tick/daemon never depend on it. */
+async function analyst(home, prompt) {
+  if (!prompt) throw new Error('analyst 需要一句任务，例如 "看看最近有什么异常"')
+  const at = place(home)
+  await setupAnalyst(at)
+  const env = {
+    ...at.env,
+    NIGHTWATCH_PROJECTION: at.env.NIGHTWATCH_PROJECTION ?? '1',
+    NIGHTWATCH_NOTE_PATH: join(home, 'investigations.jsonl'),
+    NIGHTWATCH_BUDGET_CALLS: at.env.NIGHTWATCH_BUDGET_CALLS ?? '20',
+    NIGHTWATCH_BUDGET_MINUTES: at.env.NIGHTWATCH_BUDGET_MINUTES ?? '5',
+    NIGHTWATCH_BUDGET_BYTES: at.env.NIGHTWATCH_BUDGET_BYTES ?? '262144',
+  }
+  process.exitCode = await start({ ...at, env }, ['--profile', analystProfile, prompt]).done
 }
 
 /** Boot the minimal host once and assert that only the watch_* tools are reachable. */
@@ -460,6 +493,10 @@ try {
     await smoke()
   } else if (command === 'selfcheck') {
     await selfcheck()
+  } else if (command === 'analyst') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await analyst(home, process.argv.slice(4).join(' '))
   } else if (command === 'tick' || command === 'baseline') {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
