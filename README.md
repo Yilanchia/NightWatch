@@ -106,6 +106,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs push <url> <bundle.json>` | 把 bundle 推给协调端 |
 | `node scripts/nightwatch.mjs correlate <state.json>` | 按事实 key 跨节点关联 |
 | `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主：强制力探针（工具面 / 拒绝门 / 名称盲区）+ PDP |
+| `node scripts/egress-probe.mjs` | 出口投影探针：假模型端点 + canary，正反两组 |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
 
 ## 代码结构

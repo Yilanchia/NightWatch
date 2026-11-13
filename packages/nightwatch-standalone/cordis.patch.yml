@@ -45,3 +45,5 @@
         applyFix: !!js process.env.NIGHTWATCH_APPLY_FIX === '1'
         # The headless core is where agent tools live; keep the name-blindness gap closed.
         pdp: true
+        # No model here, so nothing leaves the node; projection is only for analyst runs.
+        projection: false

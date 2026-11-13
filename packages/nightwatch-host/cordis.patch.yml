@@ -30,3 +30,5 @@
         applyFix: !!js process.env.NIGHTWATCH_APPLY_FIX === '1'
         # The interactive host keeps the framework tools; PDP would deny them, so it stays off.
         pdp: false
+        # Analyst runs set NIGHTWATCH_PROJECTION=1 so evidence is redacted before the model sees it.
+        projection: !!js process.env.NIGHTWATCH_PROJECTION === '1'

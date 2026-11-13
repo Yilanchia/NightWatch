@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { isAbsolute, dirname } from 'node:path'
 import { installPolicy } from './pdp.js'
+import { installProjection } from './projection.js'
 import { WatchStore } from './store.js'
 import { registerTools, type WatchConfig } from './tools.js'
 
@@ -115,6 +116,8 @@ export interface Config {
    * unknown, write and approval-required tools are denied before their body runs.
    */
   readonly pdp: boolean
+  /** Redact private keys, tokens and absolute paths from watch_* tool results before a model sees them. */
+  readonly projection: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -131,6 +134,7 @@ export const Config: z<Config> = z.object({
   authorizedKeys: z.string().description('authorized_keys path; ~/.ssh/authorized_keys when absent.'),
   applyFix: z.boolean().default(false).description('Register watch_apply_fix. Keep it off unless the owner explicitly wants repairs.'),
   pdp: z.boolean().default(false).description('Install the policy decision point: deny tools without a declared read-only action.'),
+  projection: z.boolean().default(false).description('Redact sensitive shapes from watch_* tool results before they reach a model.'),
 })
 
 export function apply(ctx: Context, config: Config): void {
@@ -158,6 +162,7 @@ export function apply(ctx: Context, config: Config): void {
 
   registerTools(ctx, { store, config: watchConfig })
   if (config.pdp) ctx.effect(() => installPolicy(ctx), 'nightwatch.pdp')
+  if (config.projection) ctx.effect(() => installProjection(ctx), 'nightwatch.projection')
   ctx.effect(() => () => store.close(), 'nightwatch.store')
 
   const enabled = [config.ports ? 'ports' : '', config.ssh ? 'ssh' : '', config.backup ? 'backup' : ''].filter(Boolean)
