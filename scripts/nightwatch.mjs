@@ -21,6 +21,7 @@
 //   node scripts/nightwatch.mjs correlate group open findings across nodes (same fact key)
 //   node scripts/nightwatch.mjs selfcheck boot the explicit minimal host and assert its tool list
 //   node scripts/nightwatch.mjs analyst   run a bounded, read-only investigation with a model
+//   node scripts/nightwatch.mjs approve   issue a one-time owner approval for one repair proposal
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -433,6 +434,38 @@ async function pushCommand(url, bundleFile) {
   console.log(`已推送 ${body.nodeId}：新增 ${body.added} 条、更新 ${body.updated} 条${body.staleSeq ? '（旧序号）' : ''}`)
 }
 
+/** Explicit owner approval: bind a one-time grant to one proposal and the file's current state. */
+async function approveCommand(home, proposalId, minutes) {
+  if (!proposalId) throw new Error('approve 需要 <home> <proposalId> [minutes]')
+  const { store } = await openReadCore(home)
+  try {
+    const proposal = store.proposalById(proposalId)
+    if (!proposal) throw new Error(`没有找到提案 ${proposalId}。先跑 watch_propose_fix。`)
+    const config = coreConfig(home)
+    const sshd =
+      config.sshdConfig ??
+      (process.platform === 'win32'
+        ? join(process.env.ProgramData ?? 'C:\\ProgramData', 'ssh', 'sshd_config')
+        : '/etc/ssh/sshd_config')
+    const content = readFileSync(sshd, 'utf8')
+    const approval = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'approval.js')).href)
+    const key = approval.ensureApprovalKey(home)
+    const grant = approval.createGrant(key, proposal, {
+      stateFingerprint: approval.stateFingerprint(content),
+      approver: 'owner',
+      now: Date.now(),
+      ttlMinutes: Number(minutes ?? 15),
+    })
+    approval.appendGrant(home, grant)
+    console.log(`已生成一次性审批 ${grant.id}`)
+    console.log(`提案：${proposal.id}；文件：${sshd}；绑定状态 ${grant.subject.stateFingerprint.slice(0, 12)}…`)
+    console.log(`有效期至：${new Date(grant.expiresAt).toISOString()}`)
+    console.log('执行时把 approvalId 交给 watch_apply_fix；这份审批只能使用一次。')
+  } finally {
+    store.close()
+  }
+}
+
 /**
  * Built-in scheduler. Holds the evidence lock for its lifetime (so no second writer can interleave),
  * catches up a missed run once after a restart, and never overlaps inspections.
@@ -497,6 +530,10 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await analyst(home, process.argv.slice(4).join(' '))
+  } else if (command === 'approve') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await approveCommand(home, process.argv[4], process.argv[5])
   } else if (command === 'tick' || command === 'baseline') {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)

@@ -187,6 +187,8 @@ export interface FixAction {
   readonly backupPaths: readonly string[]
   readonly outcome: 'applied' | 'rolled-back' | 'failed'
   readonly detail: string
+  /** The owner approval grant that allowed this action. */
+  readonly approvalId?: string
 }
 
 /** One pass of the collectors: what is true right now, by collector. */

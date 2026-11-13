@@ -23,6 +23,8 @@ export interface ApplyOptions {
   /** The sshd_config Watch was configured to read. Never taken from the proposal. */
   readonly sshdConfig: string
   readonly now: number
+  /** The owner approval grant that allowed this run, recorded for traceability. */
+  readonly approvalId?: string
 }
 
 function message(error: unknown): string {
@@ -102,6 +104,7 @@ export function applyProposal(store: WatchStore, proposal: FixProposal, options:
       backupPaths: [backup],
       outcome,
       detail,
+      ...(options.approvalId ? { approvalId: options.approvalId } : {}),
     })
     return outcome === 'rolled-back'
       ? `执行失败，已从备份恢复（${backup}）：${detail}`

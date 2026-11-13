@@ -1,7 +1,9 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { applyProposal } from './apply.js'
+import { consumeGrant, findGrant, loadApprovalKey, stateFingerprint, verifyGrant } from './approval.js'
 import type { Runner } from './collect.js'
 import { formatHealth, inspectionHealth, takeBaseline, takeDiff, writeReport } from './inspect.js'
 import { buildProposal, formatProposal } from './propose.js'
@@ -27,6 +29,8 @@ export interface WatchConfig {
   readonly observationValidHours?: number
   /** Register the repair executor. Defaults to false when absent. */
   readonly applyFix?: boolean
+  /** Require a one-time owner approval grant before the executor writes. Defaults to true. */
+  readonly requireApproval?: boolean
   readonly sshdConfig?: string
   readonly authorizedKeys?: string
 }
@@ -67,13 +71,39 @@ function defaultSshdConfig(platform: NodeJS.Platform): string {
   return platform === 'win32' ? join(process.env.ProgramData ?? 'C:\\ProgramData', 'ssh', 'sshd_config') : '/etc/ssh/sshd_config'
 }
 
-/** Apply one stored plan. The guard has already asked the owner; a refusal never reaches here. */
-export function applyFix(ctx: WatchContext, proposalId: string): string {
+/** Apply one stored plan, but only with a valid, unconsumed owner approval grant. */
+export function applyFix(ctx: WatchContext, proposalId: string, approvalId?: string): string {
   const proposal = ctx.store.proposalById(proposalId)
   if (!proposal) return `没有找到提案 ${proposalId}。先 watch_propose_fix，让它先给出计划。`
   const platform = ctx.platform ?? process.platform
   const sshdConfig = ctx.config.sshdConfig ?? defaultSshdConfig(platform)
-  return applyProposal(ctx.store, proposal, { sshdConfig, now: at(ctx) })
+  const now = at(ctx)
+
+  if (ctx.config.requireApproval !== false) {
+    const home = dirname(ctx.config.evidencePath)
+    if (!approvalId) {
+      return `不执行：这份提案需要主人审批。先运行 \`nightwatch approve ${home} ${proposalId}\`，再把审批 ID 交给执行器。`
+    }
+    const key = loadApprovalKey(home)
+    if (!key) return '不执行：这台机器还没有审批密钥。先运行 nightwatch approve 生成审批。'
+    const grant = findGrant(home, approvalId)
+    if (!grant) return `不执行：找不到审批 ${approvalId}。`
+    let current: string
+    try {
+      current = readFileSync(sshdConfig, 'utf8')
+    } catch {
+      return `不执行：读不到 ${sshdConfig}，无法核对审批绑定的文件状态。`
+    }
+    const check = verifyGrant(grant, key.publicKeyPem, {
+      proposal,
+      stateFingerprint: stateFingerprint(current),
+      now,
+    })
+    if (!check.ok) return `不执行：审批无效（${check.reason ?? '未知原因'}）。`
+    if (!consumeGrant(home, grant.id, now)) return '不执行：这是一次性审批，已经被使用过。'
+  }
+
+  return applyProposal(ctx.store, proposal, { sshdConfig, now, ...(approvalId ? { approvalId } : {}) })
 }
 
 const TEXT_OUTPUT = {
@@ -176,10 +206,11 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
         'Apply one stored repair plan to the SSH config. Destructive: the owner is asked to approve it first and a refusal wins. The original file is copied first, every changed line is verified, a failure restores the copy, and no service is restarted.',
       parameters: {
         proposalId: { type: 'string', required: true, description: 'Proposal id returned by watch_propose_fix.' },
+        approvalId: { type: 'string', description: 'One-time owner approval id returned by nightwatch approve.' },
       },
       output: TEXT_OUTPUT,
-      async execute({ proposalId }: { proposalId: string }) {
-        return applyFix(watch, proposalId)
+      async execute({ proposalId, approvalId }: { proposalId: string; approvalId?: string }) {
+        return applyFix(watch, proposalId, approvalId)
       },
     }),
   )

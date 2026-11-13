@@ -7,6 +7,21 @@ import { WatchStore } from './store.js'
 import { registerTools, type WatchConfig } from './tools.js'
 
 export { applyProposal } from './apply.js'
+export {
+  appendGrant,
+  changesDigest,
+  consumeGrant,
+  createGrant,
+  ensureApprovalKey,
+  findGrant,
+  isConsumed,
+  loadApprovalKey,
+  stateFingerprint,
+  verifyGrant,
+  type ApprovalGrant,
+  type ApprovalSubject,
+  type GrantCheck,
+} from './approval.js'
 export { collectAll, defaultRunner, type CollectorConfig, type RunResult, type Runner } from './collect.js'
 export {
   correlate,
@@ -111,6 +126,8 @@ export interface Config {
    * can edit sshd_config until the owner explicitly asks for it.
    */
   readonly applyFix: boolean
+  /** Require a one-time owner approval grant before the executor writes. Defaults to true. */
+  readonly requireApproval: boolean
   /**
    * Install the policy decision point: only explicitly declared read-only tools are allowed;
    * unknown, write and approval-required tools are denied before their body runs.
@@ -133,6 +150,7 @@ export const Config: z<Config> = z.object({
   sshdConfig: z.string().description('sshd_config path; platform default when absent.'),
   authorizedKeys: z.string().description('authorized_keys path; ~/.ssh/authorized_keys when absent.'),
   applyFix: z.boolean().default(false).description('Register watch_apply_fix. Keep it off unless the owner explicitly wants repairs.'),
+  requireApproval: z.boolean().default(true).description('Require a one-time owner approval grant before the executor writes.'),
   pdp: z.boolean().default(false).description('Install the policy decision point: deny tools without a declared read-only action.'),
   projection: z.boolean().default(false).description('Redact sensitive shapes from watch_* tool results before they reach a model.'),
 })
@@ -156,6 +174,7 @@ export function apply(ctx: Context, config: Config): void {
     backupStaleHours: config.backupStaleHours,
     observationValidHours: config.observationValidHours,
     applyFix: config.applyFix,
+    requireApproval: config.requireApproval,
     ...(config.sshdConfig ? { sshdConfig: config.sshdConfig } : {}),
     ...(config.authorizedKeys ? { authorizedKeys: config.authorizedKeys } : {}),
   }
