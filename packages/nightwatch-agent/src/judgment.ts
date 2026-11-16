@@ -51,7 +51,8 @@ export interface InvestigationJudgment extends JudgmentInput {
   readonly key: string
   readonly source: 'model'
   readonly model: string
-  readonly budget: JudgmentBudget
+  /** Present when the caller (loop or tool) can report a real snapshot; omitted otherwise. */
+  readonly budget?: JudgmentBudget
 }
 
 export interface ValidationContext {
@@ -59,7 +60,7 @@ export interface ValidationContext {
   readonly observationExists: (id: string) => boolean
   readonly now: number
   readonly model: string
-  readonly budget: JudgmentBudget
+  readonly budget?: JudgmentBudget
 }
 
 export interface ValidationResult {
@@ -143,7 +144,7 @@ export function validateJudgment(input: unknown, context: ValidationContext): Va
     key: context.finding.key,
     source: 'model',
     model: context.model,
-    budget: context.budget,
+    ...(context.budget ? { budget: context.budget } : {}),
     confirmed,
     candidates,
     counter: value.counter as string[],

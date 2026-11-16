@@ -283,7 +283,7 @@ async function summary(){
     var conf='ok';if(j.disposition==='escalate')conf='bad';else if(j.disposition==='benign-pending-owner')conf='warn';
     var html='<div class="card" style="margin-bottom:10px"><div class="row"><strong>'+esc(g.title||g.findingId)+'</strong>'+
       '<span class="badge '+conf+'">'+esc(j.disposition)+'</span><span class="badge">confidence '+esc(j.confidence)+'</span>'+
-      '<span class="sub">'+esc(j.model)+' · 预算 '+esc(j.budget.calls)+' 次/'+esc(j.budget.bytes)+' B</span></div>';
+      '<span class="sub">'+esc(j.model)+(j.budget&&(j.budget.calls>0||j.budget.bytes>0)?' · 预算 '+esc(j.budget.calls)+' 次/'+esc(j.budget.bytes)+' B':'')+'</span></div>';
     if(j.confirmed.length)html+='<div style="margin-top:8px"><span class="badge ok">已读（observed）</span><ul>'+j.confirmed.map(function(c){
       return '<li>'+esc(c.text)+' <span class="sub">['+esc(c.evidenceRef)+']</span></li>'}).join('')+'</ul></div>';
     if(j.candidates.length)html+='<div style="margin-top:8px"><span class="badge warn">模型推断（inferred）</span><ul>'+j.candidates.map(function(c){

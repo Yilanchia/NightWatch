@@ -257,7 +257,7 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
         } catch (error) {
           return `拒绝：${error instanceof Error ? error.message : String(error)}`
         }
-        let budget = { calls: 0, ms: 0, bytes: 0 }
+        let budget: { calls: number; ms: number; bytes: number } | undefined
         if (args.budget) {
           try {
             budget = JSON.parse(args.budget) as typeof budget
@@ -270,7 +270,7 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
           observationExists: (id) => watch.store.observationById(id) !== undefined,
           now: at(watch),
           model: watch.config.modelLabel ?? 'model',
-          budget,
+          ...(budget ? { budget } : {}),
         })
         if (!result.ok || !result.judgment) return `拒绝：${result.errors.join('；')}`
         const path = watch.config.judgmentsPath ?? join(dirname(watch.config.evidencePath), 'judgments.jsonl')

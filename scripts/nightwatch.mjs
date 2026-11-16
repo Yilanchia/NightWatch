@@ -46,7 +46,9 @@ const analystDir = join(root, 'packages', 'nightwatch-analyst')
 function ownEnv() {
   const file = join(root, '.env')
   if (!existsSync(file)) return {}
-  return Object.fromEntries(Object.entries(parseEnv(readFileSync(file, 'utf8'))).filter(([, value]) => value !== ''))
+  // Windows editors may write a UTF-8 BOM; parseEnv would otherwise key the first name with it.
+  const text = readFileSync(file, 'utf8').replace(/^\uFEFF/u, '')
+  return Object.fromEntries(Object.entries(parseEnv(text)).filter(([, value]) => value !== ''))
 }
 
 function place(home) {
@@ -145,6 +147,7 @@ async function analyst(home, prompt) {
     ...at.env,
     NIGHTWATCH_PROJECTION: at.env.NIGHTWATCH_PROJECTION ?? '1',
     NIGHTWATCH_NOTE_PATH: join(home, 'investigations.jsonl'),
+    NIGHTWATCH_JUDGMENTS_PATH: join(home, 'judgments.jsonl'),
     NIGHTWATCH_BUDGET_CALLS: at.env.NIGHTWATCH_BUDGET_CALLS ?? '20',
     NIGHTWATCH_BUDGET_MINUTES: at.env.NIGHTWATCH_BUDGET_MINUTES ?? '5',
     NIGHTWATCH_BUDGET_BYTES: at.env.NIGHTWATCH_BUDGET_BYTES ?? '262144',
@@ -520,7 +523,9 @@ async function investigate(home, limit) {
       run: async (finding) => {
         const prompt =
           `调查发现 ${finding.id}（${finding.kind}，key=${finding.key}，标题「${finding.title}」）。` +
-          '只读：用 watch_health、watch_timeline、watch_diff 核查；然后用 watch_investigate_judgment ' +
+          '只读已有证据：用 watch_health、watch_timeline 核查；' +
+          '不要触发新采集（不要用 watch_diff/watch_report）。' +
+          '然后用 watch_investigate_judgment ' +
           `提交结构化判断（findingId=${finding.id}）。不要执行写操作，不要修改发现或基线。`
         const child = spawn(process.execPath, [join(root, 'scripts', 'nightwatch.mjs'), 'analyst', home, prompt], {
           cwd: root,

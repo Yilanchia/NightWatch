@@ -37,7 +37,7 @@
 `node scripts/egress-probe.mjs` 正反两组通过；
 `nightwatch acceptance` 用验收机真实证据副本通过（7 天 run/日报、最近 ok、重建一致）；版本 `0.1.0`；
 `nightwatch panel` 渲染 summary/findings/告警/待调查/调查判断/日报；`tick`/`daemon` 会入队 pending + 告警；
-`nightwatch investigate` 能消费 pending（无模型时保留，不伪造判断）；
+`nightwatch investigate` 已用真模型在临时副本跑通（1 条 judgment、pending 减 1，失败保留）；
 `tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate` 跑通；
 `inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
 
@@ -172,7 +172,7 @@ node scripts/nightwatch.mjs dump
 - M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
 - 首台验收机 daemon 连续巡检（2026-11-10 → 11-17）；验收命令已在真实证据副本上通过。
 - 发布：`docs/发布-2026-11-17.md`；11-17 最后一轮后跑 `acceptance` 并打 tag；写路径继续关。
-- 下一步：真模型实跑验证消费者、复发/处置后重查、限频/安静时段/升级阶梯/出站通道、隔离演练、M1 TLS；别先接 osquery。
+- 下一步：复发/处置后重查、限频/安静时段/升级阶梯/出站通道、隔离演练、M1 TLS；别先接 osquery。
 
 ---
 
