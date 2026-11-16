@@ -22,6 +22,8 @@
 //   node scripts/nightwatch.mjs selfcheck boot the explicit minimal host and assert its tool list
 //   node scripts/nightwatch.mjs analyst   run a bounded, read-only investigation with a model
 //   node scripts/nightwatch.mjs approve   issue a one-time owner approval for one repair proposal
+//   node scripts/nightwatch.mjs acceptance  audit daily runs/reports + rebuild consistency from the log
+//   node scripts/nightwatch.mjs version   print the version
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -466,6 +468,30 @@ async function approveCommand(home, proposalId, minutes) {
   }
 }
 
+/** Audit what is already on disk: daily runs/reports, last health, and a rebuild from the log. */
+async function acceptanceCommand(home, days) {
+  const { store } = await openReadCore(home)
+  try {
+    const acceptance = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'acceptance.js')).href)
+    const result = acceptance.runAcceptance(store, {
+      now: Date.now(),
+      days: Number(days ?? 7),
+      evidencePath: join(home, 'watch.jsonl'),
+      reportDir: join(home, 'watch-reports'),
+    })
+    for (const check of result.checks) console.log(`${check.ok ? 'PASS' : 'FAIL'} ${check.name}：${check.detail}`)
+    console.log(result.pass ? '验收通过' : '验收未通过')
+    process.exitCode = result.pass ? 0 : 1
+  } finally {
+    store.close()
+  }
+}
+
+function versionCommand() {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  console.log(`nightwatch ${pkg.version ?? '0.0.0'}`)
+}
+
 /**
  * Built-in scheduler. Holds the evidence lock for its lifetime (so no second writer can interleave),
  * catches up a missed run once after a restart, and never overlaps inspections.
@@ -511,7 +537,13 @@ async function daemon(home, intervalMinutes) {
 const command = process.argv[2] ?? 'web'
 try {
   const at = place(process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
-  if (command === 'setup') {
+  if (command === 'version' || command === '--version' || command === '-v') {
+    versionCommand()
+  } else if (command === 'acceptance') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await acceptanceCommand(home, process.argv[4])
+  } else if (command === 'setup') {
     await setup(at)
     console.log(`nightwatch: profile ready at ${join(at.home, 'profiles', profile)}`)
   } else if (command === 'dump') {

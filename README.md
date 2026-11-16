@@ -107,6 +107,8 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs correlate <state.json>` | 按事实 key 跨节点关联 |
 | `node scripts/nightwatch.mjs analyst <home> "<任务>"` | 有界只读调查（analyst bundle：预算 + 推断注释） |
 | `node scripts/nightwatch.mjs approve <home> <proposalId> [minutes]` | 生成一次性审批（绑定提案与文件状态） |
+| `node scripts/nightwatch.mjs acceptance <home> [days]` | 发布验收：每日 run/日报 + 从日志重建一致性 |
+| `node scripts/nightwatch.mjs version` | 打印版本 |
 | `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主：强制力探针（工具面 / 拒绝门 / 名称盲区）+ PDP |
 | `node scripts/egress-probe.mjs` | 出口投影探针：假模型端点 + canary，正反两组 |
 | `node scripts/nightwatch.mjs smoke` | 临时 home 里真实启动一次宿主 |
@@ -135,6 +137,7 @@ nightwatch
 ## 设计材料
 
 - [外部项目-Watch-构思-v2.md](外部项目-Watch-构思-v2.md)：最初的设计与外部调研（项目当时叫 Nightwatch）
+- [docs/发布-2026-11-17.md](docs/发布-2026-11-17.md)：v0.1.0 发布记录、7 天验收证据与已知限制
 - [agent-memory-调研.md](agent-memory-调研.md)：记忆系统调研
 - [项目评审-2026-11-09.md](项目评审-2026-11-09.md)：GPT 的代码级评审
 

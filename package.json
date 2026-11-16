@@ -1,5 +1,6 @@
 {
   "name": "nightwatch",
+  "version": "0.1.0",
   "private": true,
   "description": "Nightwatch (守夜人): a standalone read-only defence agent for the machine it lives on.",
   "type": "module",
