@@ -257,6 +257,16 @@ function coreConfig(home) {
  * This is the piece a cron job or systemd timer can call, and the M0 evidence that the product
  * does not depend on the agent runtime.
  */
+/** Deterministic trigger: new/recurring findings become pending investigations (never blocks). */
+async function queuePending(home, findings) {
+  if (findings.length === 0) return
+  const { enqueueInvestigations } = await import(
+    pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'trigger.js')).href
+  )
+  const queued = enqueueInvestigations(join(home, 'investigations-pending.jsonl'), findings, Date.now())
+  if (queued.length > 0) console.log(`nightwatch: queued ${queued.length} pending investigation(s)`)
+}
+
 async function tick(home) {
   const { core, store } = await openCore(home)
   try {
@@ -265,6 +275,7 @@ async function tick(home) {
     }
     const result = core.runInspection({ store, config: coreConfig(home) }, { trigger: 'tick' })
     console.log(core.formatInspection(result))
+    await queuePending(home, result.newFindings)
     // 0 = every collector read; 2 = something was partial; 1 = at least one collector failed.
     process.exitCode = result.health === 'ok' ? 0 : result.health === 'partial' ? 2 : 1
   } finally {
@@ -504,6 +515,7 @@ async function panelCommand(home, port, host) {
       config: coreConfig(home),
       port: listenPort,
       judgmentsPath: join(home, 'judgments.jsonl'),
+      pendingPath: join(home, 'investigations-pending.jsonl'),
       ...(host ? { host } : {}),
     })
     console.log(`panel ${server.url}（只读）`)
@@ -538,10 +550,11 @@ async function daemon(home, intervalMinutes) {
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const runOnce = () => {
+  const runOnce = async () => {
     try {
       const result = core.runInspection({ store, config: coreConfig(home) }, { trigger: 'scheduler' })
       console.log(core.formatInspection(result))
+      await queuePending(home, result.newFindings)
     } catch (error) {
       console.error(`nightwatch: inspection failed: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -550,12 +563,12 @@ async function daemon(home, intervalMinutes) {
   }
   try {
     console.log(`nightwatch: daemon watching ${home}, interval ${minutes} min`)
-    if (schedule.isDue(store.lastRun()?.at, Date.now(), intervalMs)) runOnce()
+    if (schedule.isDue(store.lastRun()?.at, Date.now(), intervalMs)) await runOnce()
     while (!stopping) {
       const next = schedule.nextRunAt(store.lastRun()?.at, Date.now(), intervalMs)
       const wait = Math.max(1000, next - Date.now())
       await sleep(Math.min(wait, 60_000))
-      if (!stopping && schedule.isDue(store.lastRun()?.at, Date.now(), intervalMs)) runOnce()
+      if (!stopping && schedule.isDue(store.lastRun()?.at, Date.now(), intervalMs)) await runOnce()
     }
     console.log('nightwatch: daemon stopped')
   } finally {

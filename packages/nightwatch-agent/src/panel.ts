@@ -3,6 +3,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { inspectionHealth } from './inspect.js'
 import { judgmentsByFinding } from './judgment.js'
+import { loadPending } from './trigger.js'
 import type { WatchStore } from './store.js'
 import { queryTimeline, renderTimeline } from './timeline.js'
 import type { WatchConfig } from './tools.js'
@@ -24,6 +25,8 @@ export interface PanelOptions {
   readonly now?: () => number
   /** judgments.jsonl; defaults next to nothing — API returns [] when absent. */
   readonly judgmentsPath?: string
+  /** investigations-pending.jsonl; API returns [] when absent. */
+  readonly pendingPath?: string
 }
 
 export interface PanelServer {
@@ -137,6 +140,17 @@ export async function startPanel(options: PanelOptions): Promise<PanelServer> {
         })
         return
       }
+      if (url.pathname === '/api/pending') {
+        const pending = options.pendingPath ? loadPending(options.pendingPath) : []
+        json(response, 200, {
+          pending: pending.map((item) => ({
+            ...item,
+            title: options.store.findings('id = ?', item.findingId)[0]?.title,
+            severity: options.store.findings('id = ?', item.findingId)[0]?.severity,
+          })),
+        })
+        return
+      }
       if (url.pathname === '/api/investigations') {
         const grouped = options.judgmentsPath ? judgmentsByFinding(options.judgmentsPath) : new Map()
         const investigations = [...grouped.entries()].map(([findingId, history]) => {
@@ -211,6 +225,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px}
 <div class="cards" id="cards"></div>
 <h2>未关闭风险</h2>
 <table><thead><tr><th>严重度</th><th>发现</th><th>状态</th><th>首次</th><th>最近</th></tr></thead><tbody id="findings"></tbody></table>
+<h2>待调查</h2><div id="pending"></div>
 <h2>调查判断</h2><div id="investigations"></div>
 <h2>采集健康 / 盲区</h2><div id="health"></div>
 <h2>日报</h2><table><thead><tr><th>日期</th><th>大小</th></tr></thead><tbody id="reports"></tbody></table>
@@ -239,6 +254,10 @@ async function summary(){
   var f=await (await fetch('/api/findings')).json();
   document.getElementById('findings').innerHTML=f.findings.length?f.findings.map(function(x){
     return '<tr><td>'+esc(x.severity)+'</td><td>'+esc(x.title)+'<div class="sub">'+esc(x.key)+'</div></td><td>'+esc(x.status)+'</td><td>'+ts(x.firstSeen)+'</td><td>'+ts(x.lastSeen)+'</td></tr>'}).join(''):'<tr><td colspan="5">没有未关闭风险</td></tr>';
+  var pd=await (await fetch('/api/pending')).json();
+  document.getElementById('pending').innerHTML=pd.pending.length?pd.pending.map(function(p){
+    return '<div class="card" style="margin-bottom:8px"><span class="badge">'+esc(p.reason==='recurrence'?'复发':'新发现')+'</span> '+
+      '<strong>'+esc(p.title||p.findingId)+'</strong> <span class="sub">'+esc(p.key)+' · '+ts(p.at)+'</span></div>'}).join(''):'<div class="card">没有待调查项。模型未接入时，调查只入队、不伪造结论。</div>';
   var inv=await (await fetch('/api/investigations')).json();
   document.getElementById('investigations').innerHTML=inv.investigations.length?inv.investigations.map(function(g){
     var j=g.latest;if(!j)return '';
