@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { inspectionHealth } from './inspect.js'
+import { loadOpenAlerts } from './alerts.js'
 import { judgmentsByFinding } from './judgment.js'
 import { loadPending } from './trigger.js'
 import type { WatchStore } from './store.js'
@@ -27,6 +28,8 @@ export interface PanelOptions {
   readonly judgmentsPath?: string
   /** investigations-pending.jsonl; API returns [] when absent. */
   readonly pendingPath?: string
+  /** alerts.jsonl; API returns open alerts when present. */
+  readonly alertsPath?: string
 }
 
 export interface PanelServer {
@@ -140,6 +143,16 @@ export async function startPanel(options: PanelOptions): Promise<PanelServer> {
         })
         return
       }
+      if (url.pathname === '/api/alerts') {
+        const alerts = options.alertsPath ? loadOpenAlerts(options.alertsPath) : []
+        json(response, 200, {
+          alerts: alerts.map((alert) => ({
+            ...alert,
+            title: options.store.findings('id = ?', alert.findingId)[0]?.title,
+          })),
+        })
+        return
+      }
       if (url.pathname === '/api/pending') {
         const pending = options.pendingPath ? loadPending(options.pendingPath) : []
         json(response, 200, {
@@ -225,6 +238,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px}
 <div class="cards" id="cards"></div>
 <h2>未关闭风险</h2>
 <table><thead><tr><th>严重度</th><th>发现</th><th>状态</th><th>首次</th><th>最近</th></tr></thead><tbody id="findings"></tbody></table>
+<h2>告警</h2><div id="alerts"></div>
 <h2>待调查</h2><div id="pending"></div>
 <h2>调查判断</h2><div id="investigations"></div>
 <h2>采集健康 / 盲区</h2><div id="health"></div>
@@ -254,6 +268,11 @@ async function summary(){
   var f=await (await fetch('/api/findings')).json();
   document.getElementById('findings').innerHTML=f.findings.length?f.findings.map(function(x){
     return '<tr><td>'+esc(x.severity)+'</td><td>'+esc(x.title)+'<div class="sub">'+esc(x.key)+'</div></td><td>'+esc(x.status)+'</td><td>'+ts(x.firstSeen)+'</td><td>'+ts(x.lastSeen)+'</td></tr>'}).join(''):'<tr><td colspan="5">没有未关闭风险</td></tr>';
+  var al=await (await fetch('/api/alerts')).json();
+  document.getElementById('alerts').innerHTML=al.alerts.length?al.alerts.map(function(a){
+    return '<div class="card" style="margin-bottom:8px"><span class="badge bad">'+esc(a.severity)+'</span> '+
+      '<strong>'+esc(a.title||a.findingId)+'</strong> <span class="sub">'+esc(a.key)+' · '+
+      esc(a.reason==='recurrence'?'复发':'新发现')+' · '+ts(a.at)+'</span></div>'}).join(''):'<div class="card">没有未确认的高危告警。</div>';
   var pd=await (await fetch('/api/pending')).json();
   document.getElementById('pending').innerHTML=pd.pending.length?pd.pending.map(function(p){
     return '<div class="card" style="margin-bottom:8px"><span class="badge">'+esc(p.reason==='recurrence'?'复发':'新发现')+'</span> '+

@@ -260,11 +260,12 @@ function coreConfig(home) {
 /** Deterministic trigger: new/recurring findings become pending investigations (never blocks). */
 async function queuePending(home, findings) {
   if (findings.length === 0) return
-  const { enqueueInvestigations } = await import(
-    pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'trigger.js')).href
-  )
-  const queued = enqueueInvestigations(join(home, 'investigations-pending.jsonl'), findings, Date.now())
+  const trigger = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'trigger.js')).href)
+  const queued = trigger.enqueueInvestigations(join(home, 'investigations-pending.jsonl'), findings, Date.now())
   if (queued.length > 0) console.log(`nightwatch: queued ${queued.length} pending investigation(s)`)
+  const alerts = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'alerts.js')).href)
+  const raised = alerts.enqueueAlerts(join(home, 'alerts.jsonl'), findings, Date.now())
+  if (raised.length > 0) console.log(`nightwatch: raised ${raised.length} deterministic alert(s)`)
 }
 
 async function tick(home) {
@@ -516,6 +517,7 @@ async function panelCommand(home, port, host) {
       port: listenPort,
       judgmentsPath: join(home, 'judgments.jsonl'),
       pendingPath: join(home, 'investigations-pending.jsonl'),
+      alertsPath: join(home, 'alerts.jsonl'),
       ...(host ? { host } : {}),
     })
     console.log(`panel ${server.url}（只读）`)
