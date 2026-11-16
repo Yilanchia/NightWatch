@@ -26,6 +26,7 @@
 //   node scripts/nightwatch.mjs version   print the version
 //   node scripts/nightwatch.mjs panel     read-only local dashboard (SSH tunnel; no writes)
 //   node scripts/nightwatch.mjs investigate  consume pending investigations with the analyst
+//   node scripts/nightwatch.mjs alerts     list/ack deterministic alerts
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -521,8 +522,26 @@ async function investigate(home, limit) {
       limit: Number(limit ?? 10),
       now: () => Date.now(),
       run: async (finding) => {
+        let previous = ''
+        if (finding.recurrenceOf) {
+          try {
+            const judgment = await import(
+              pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'judgment.js')).href
+            )
+            const prior = judgment
+              .loadJudgments(join(home, 'judgments.jsonl'))
+              .filter((item) => item.findingId === finding.recurrenceOf)
+              .pop()
+            if (prior) {
+              previous = `这是复发。上次判断：disposition=${prior.disposition}，confidence=${prior.confidence}；上次建议：${prior.recommendation}。请对比这次和上次的差异。`
+            }
+          } catch {
+            // A missing/corrupt history must not block the investigation.
+          }
+        }
         const prompt =
           `调查发现 ${finding.id}（${finding.kind}，key=${finding.key}，标题「${finding.title}」）。` +
+          (previous ? `${previous} ` : '') +
           '只读已有证据：用 watch_health、watch_timeline 核查；' +
           '不要触发新采集（不要用 watch_diff/watch_report）。' +
           '然后用 watch_investigate_judgment ' +
@@ -553,6 +572,33 @@ async function investigate(home, limit) {
     }
     console.log(`调查队列：尝试 ${result.attempted}，完成 ${result.completed}，失败 ${result.failed}，剩余 ${result.remaining}`)
     if (result.remaining > 0) process.exitCode = result.completed > 0 ? 0 : 1
+  } finally {
+    store.close()
+  }
+}
+
+/** List or acknowledge deterministic alerts (ack writes only alerts.jsonl). */
+async function alertsCommand(home, action, id) {
+  const alerts = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'alerts.js')).href)
+  const path = join(home, 'alerts.jsonl')
+  const { store } = await openReadCore(home)
+  try {
+    if (action === 'ack') {
+      if (!id) throw new Error('alerts ack 需要 alert id')
+      const ok = alerts.acknowledgeAlert(path, id, Date.now())
+      console.log(ok ? `已确认 ${id}` : `没有找到未确认的告警 ${id}`)
+      if (!ok) process.exitCode = 1
+      return
+    }
+    const open = alerts.loadOpenAlerts(path)
+    if (open.length === 0) {
+      console.log('没有未确认的告警。')
+      return
+    }
+    for (const alert of open) {
+      const finding = store.findings('id = ?', alert.findingId)[0]
+      console.log(`${alert.id} [${alert.severity}] ${finding?.title ?? alert.findingId}（${alert.reason === 'recurrence' ? '复发' : '新发现'}）`)
+    }
   } finally {
     store.close()
   }
@@ -671,6 +717,10 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await investigate(home, process.argv[4])
+  } else if (command === 'alerts') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await alertsCommand(home, process.argv[4], process.argv[5])
   } else if (command === 'tick' || command === 'baseline') {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)

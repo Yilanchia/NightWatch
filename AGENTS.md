@@ -139,6 +139,7 @@ node scripts/nightwatch.mjs approve <home> <proposalId> [minutes]  # 一次性�
 node scripts/nightwatch.mjs acceptance <home> [days]  # 发布验收：每日 run/日报 + 重建一致性
 node scripts/nightwatch.mjs panel <home> [port] [host]  # 只读面板（默认 127.0.0.1:3092，SSH 隧道）
 node scripts/nightwatch.mjs investigate <home> [limit]  # 消费 pending 队列（analyst 跑调查，失败保留）
+node scripts/nightwatch.mjs alerts <home> [ack <id>]  # 列出/确认确定性告警
 node scripts/nightwatch.mjs version                   # 版本
 node scripts/nightwatch.mjs baseline <home>   # 无模型：记录基线（有盲区时拒绝）
 node scripts/nightwatch.mjs tick <home>       # 无模型巡检：0 正常 / 2 部分 / 1 失败
