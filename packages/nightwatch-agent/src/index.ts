@@ -128,6 +128,10 @@ export interface Config {
   readonly applyFix: boolean
   /** Require a one-time owner approval grant before the executor writes. Defaults to true. */
   readonly requireApproval: boolean
+  /** Where structured investigation judgments live; defaults next to the evidence log. */
+  readonly judgmentsPath?: string
+  /** Model label recorded on judgments. */
+  readonly modelLabel: string
   /**
    * Install the policy decision point: only explicitly declared read-only tools are allowed;
    * unknown, write and approval-required tools are denied before their body runs.
@@ -151,6 +155,8 @@ export const Config: z<Config> = z.object({
   authorizedKeys: z.string().description('authorized_keys path; ~/.ssh/authorized_keys when absent.'),
   applyFix: z.boolean().default(false).description('Register watch_apply_fix. Keep it off unless the owner explicitly wants repairs.'),
   requireApproval: z.boolean().default(true).description('Require a one-time owner approval grant before the executor writes.'),
+  judgmentsPath: z.string().description('Optional judgments.jsonl path; defaults next to the evidence log.'),
+  modelLabel: z.string().default('model').description('Model id recorded on investigation judgments.'),
   pdp: z.boolean().default(false).description('Install the policy decision point: deny tools without a declared read-only action.'),
   projection: z.boolean().default(false).description('Redact sensitive shapes from watch_* tool results before they reach a model.'),
 })
@@ -175,6 +181,8 @@ export function apply(ctx: Context, config: Config): void {
     observationValidHours: config.observationValidHours,
     applyFix: config.applyFix,
     requireApproval: config.requireApproval,
+    ...(config.judgmentsPath ? { judgmentsPath: config.judgmentsPath } : {}),
+    modelLabel: config.modelLabel,
     ...(config.sshdConfig ? { sshdConfig: config.sshdConfig } : {}),
     ...(config.authorizedKeys ? { authorizedKeys: config.authorizedKeys } : {}),
   }

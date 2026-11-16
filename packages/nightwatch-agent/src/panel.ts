@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { inspectionHealth } from './inspect.js'
+import { judgmentsByFinding } from './judgment.js'
 import type { WatchStore } from './store.js'
 import { queryTimeline, renderTimeline } from './timeline.js'
 import type { WatchConfig } from './tools.js'
@@ -21,6 +22,8 @@ export interface PanelOptions {
   readonly host?: string
   readonly port?: number
   readonly now?: () => number
+  /** judgments.jsonl; defaults next to nothing — API returns [] when absent. */
+  readonly judgmentsPath?: string
 }
 
 export interface PanelServer {
@@ -134,6 +137,23 @@ export async function startPanel(options: PanelOptions): Promise<PanelServer> {
         })
         return
       }
+      if (url.pathname === '/api/investigations') {
+        const grouped = options.judgmentsPath ? judgmentsByFinding(options.judgmentsPath) : new Map()
+        const investigations = [...grouped.entries()].map(([findingId, history]) => {
+          const finding = options.store.findings('id = ?', findingId)[0]
+          return {
+            findingId,
+            key: finding?.key,
+            title: finding?.title,
+            severity: finding?.severity,
+            status: finding?.status,
+            latest: history[history.length - 1],
+            history,
+          }
+        })
+        json(response, 200, { investigations })
+        return
+      }
       if (url.pathname === '/api/reports') {
         json(response, 200, { reports: reports(options.config) })
         return
@@ -191,6 +211,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px}
 <div class="cards" id="cards"></div>
 <h2>未关闭风险</h2>
 <table><thead><tr><th>严重度</th><th>发现</th><th>状态</th><th>首次</th><th>最近</th></tr></thead><tbody id="findings"></tbody></table>
+<h2>调查判断</h2><div id="investigations"></div>
 <h2>采集健康 / 盲区</h2><div id="health"></div>
 <h2>日报</h2><table><thead><tr><th>日期</th><th>大小</th></tr></thead><tbody id="reports"></tbody></table>
 <h2>时间线</h2>
@@ -218,6 +239,22 @@ async function summary(){
   var f=await (await fetch('/api/findings')).json();
   document.getElementById('findings').innerHTML=f.findings.length?f.findings.map(function(x){
     return '<tr><td>'+esc(x.severity)+'</td><td>'+esc(x.title)+'<div class="sub">'+esc(x.key)+'</div></td><td>'+esc(x.status)+'</td><td>'+ts(x.firstSeen)+'</td><td>'+ts(x.lastSeen)+'</td></tr>'}).join(''):'<tr><td colspan="5">没有未关闭风险</td></tr>';
+  var inv=await (await fetch('/api/investigations')).json();
+  document.getElementById('investigations').innerHTML=inv.investigations.length?inv.investigations.map(function(g){
+    var j=g.latest;if(!j)return '';
+    var conf='ok';if(j.disposition==='escalate')conf='bad';else if(j.disposition==='benign-pending-owner')conf='warn';
+    var html='<div class="card" style="margin-bottom:10px"><div class="row"><strong>'+esc(g.title||g.findingId)+'</strong>'+
+      '<span class="badge '+conf+'">'+esc(j.disposition)+'</span><span class="badge">confidence '+esc(j.confidence)+'</span>'+
+      '<span class="sub">'+esc(j.model)+' · 预算 '+esc(j.budget.calls)+' 次/'+esc(j.budget.bytes)+' B</span></div>';
+    if(j.confirmed.length)html+='<div style="margin-top:8px"><span class="badge ok">已读（observed）</span><ul>'+j.confirmed.map(function(c){
+      return '<li>'+esc(c.text)+' <span class="sub">['+esc(c.evidenceRef)+']</span></li>'}).join('')+'</ul></div>';
+    if(j.candidates.length)html+='<div style="margin-top:8px"><span class="badge warn">模型推断（inferred）</span><ul>'+j.candidates.map(function(c){
+      return '<li>'+esc(c.text)+' <span class="sub">'+esc(c.likelihood)+'</span></li>'}).join('')+'</ul></div>';
+    if(j.counter.length)html+='<div style="margin-top:8px"><span class="badge">反证</span><ul>'+j.counter.map(function(c){return '<li>'+esc(c)+'</li>'}).join('')+'</ul></div>';
+    if(j.gaps.length)html+='<div style="margin-top:8px"><span class="badge bad">盲区 / 没看到</span><ul>'+j.gaps.map(function(c){return '<li>'+esc(c)+'</li>'}).join('')+'</ul></div>';
+    html+='<div style="margin-top:8px"><span class="badge">建议</span> '+esc(j.recommendation)+'</div></div>';
+    return html;
+  }).join(''):'<div class="card">还没有调查判断。模型未接入时，这一栏保持为空，不会伪造结论。</div>';
   var hh='';
   if(j.blindSpots.length)hh+='<div class="card"><div class="k">盲区</div><ul>'+j.blindSpots.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul></div>';
   if(j.stale.length)hh+='<div class="card" style="margin-top:10px"><div class="k">数据过期</div><ul>'+j.stale.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul></div>';

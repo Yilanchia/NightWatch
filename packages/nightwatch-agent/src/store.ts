@@ -462,6 +462,36 @@ export class WatchStore {
     return observations
   }
 
+  /** One observation by id, so a judgment can prove which read its "confirmed" claims point at. */
+  observationById(id: string): Observation | undefined {
+    const row = this.db
+      .prepare('SELECT id, at, host, collector, facts, evidence, status, error FROM observations WHERE id = ?')
+      .get(id) as
+      | {
+          id: string
+          at: number
+          host: string
+          collector: string
+          facts: string
+          evidence: string
+          status: string | null
+          error: string | null
+        }
+      | undefined
+    if (!row) return undefined
+    return {
+      type: 'observation',
+      id: row.id,
+      at: row.at,
+      host: row.host,
+      collector: row.collector,
+      facts: JSON.parse(row.facts) as Fact[],
+      evidence: JSON.parse(row.evidence) as Observation['evidence'],
+      ...(row.status ? { status: row.status as ObservationStatus } : {}),
+      ...(row.error ? { error: row.error } : {}),
+    }
+  }
+
   /** Last time this collector read successfully, for the "data is getting old" note. */
   lastOkAt(collector: string): number | undefined {
     const row = this.db

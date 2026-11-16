@@ -30,6 +30,8 @@
         applyFix: false
         pdp: true
         projection: !!js process.env.NIGHTWATCH_PROJECTION !== '0'
+        judgmentsPath: !!js process.env.NIGHTWATCH_JUDGMENTS_PATH
+        modelLabel: deepseek-model
 
     - id: nightwatch-investigator
       name: '@nightwatch/investigator'

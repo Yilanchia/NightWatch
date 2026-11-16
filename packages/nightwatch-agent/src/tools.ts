@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { applyProposal } from './apply.js'
 import { consumeGrant, findGrant, loadApprovalKey, stateFingerprint, verifyGrant } from './approval.js'
+import { appendJudgment, validateJudgment, type JudgmentInput } from './judgment.js'
 import type { Runner } from './collect.js'
 import { formatHealth, inspectionHealth, takeBaseline, takeDiff, writeReport } from './inspect.js'
 import { buildProposal, formatProposal } from './propose.js'
@@ -31,6 +32,10 @@ export interface WatchConfig {
   readonly applyFix?: boolean
   /** Require a one-time owner approval grant before the executor writes. Defaults to true. */
   readonly requireApproval?: boolean
+  /** Where structured investigation judgments are appended. Defaults next to the evidence log. */
+  readonly judgmentsPath?: string
+  /** Model label recorded on judgments; the anchor of "source:model". */
+  readonly modelLabel?: string
   readonly sshdConfig?: string
   readonly authorizedKeys?: string
 }
@@ -109,6 +114,13 @@ export function applyFix(ctx: WatchContext, proposalId: string, approvalId?: str
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
   render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
+}
+
+function parseJsonArray(raw: string | undefined, name: string): unknown[] {
+  if (!raw) return []
+  const parsed = JSON.parse(raw) as unknown
+  if (!Array.isArray(parsed)) throw new Error(`${name} 必须是 JSON 数组`)
+  return parsed
 }
 
 export function registerTools(ctx: Context, watch: WatchContext): void {
@@ -194,6 +206,76 @@ export function registerTools(ctx: Context, watch: WatchContext): void {
       output: TEXT_OUTPUT,
       async execute({ key, days }: { key: string; days?: number }) {
         return timelineText(watch.store, key, days ?? 7, at(watch))
+      },
+    }),
+  )
+
+  // The model's only write: a structured judgment about one finding, written to a separate file.
+  // Registered only when a judgments path is configured (analyst), so the minimal host's surface
+  // stays exactly the read-only watch_* set.
+  if (watch.config.judgmentsPath) ctx.tools.register(
+    defineTool({
+      name: 'watch_investigate_judgment',
+      description:
+        'Record a structured investigation judgment about one finding. confirmed[] must cite real observation ids; candidates[] are inferences with likelihood; counter[] must contain counter-evidence you actually looked for; gaps[] are what you could not see. This never changes findings, baselines or policy.',
+      parameters: {
+        findingId: { type: 'string', required: true, description: 'Finding id from watch_diff or watch_report.' },
+        confirmed: { type: 'string', description: 'JSON array of {text, evidenceRef} where evidenceRef is an observation id.' },
+        candidates: { type: 'string', description: 'JSON array of {text, likelihood: low|medium|high}.' },
+        counter: { type: 'string', description: 'JSON array of counter-evidence strings.' },
+        gaps: { type: 'string', description: 'JSON array of what could not be observed.' },
+        recommendation: { type: 'string', required: true, description: 'What the owner should do; proposals only.' },
+        disposition: { type: 'string', required: true, description: 'propose | escalate | benign-pending-owner.' },
+        confidence: { type: 'string', required: true, description: 'low | medium | high.' },
+        budget: { type: 'string', description: 'Optional JSON {calls,ms,bytes} budget snapshot.' },
+      },
+      output: TEXT_OUTPUT,
+      async execute(args: {
+        findingId: string
+        confirmed?: string
+        candidates?: string
+        counter?: string
+        gaps?: string
+        recommendation: string
+        disposition: string
+        confidence: string
+        budget?: string
+      }) {
+        const finding = watch.store.findings('id = ?', args.findingId)[0]
+        if (!finding) return `拒绝：没有找到发现 ${args.findingId}`
+        let input: JudgmentInput
+        try {
+          input = {
+            confirmed: parseJsonArray(args.confirmed, 'confirmed') as JudgmentInput['confirmed'],
+            candidates: parseJsonArray(args.candidates, 'candidates') as JudgmentInput['candidates'],
+            counter: parseJsonArray(args.counter, 'counter') as string[],
+            gaps: parseJsonArray(args.gaps, 'gaps') as string[],
+            recommendation: args.recommendation,
+            disposition: args.disposition as JudgmentInput['disposition'],
+            confidence: args.confidence as JudgmentInput['confidence'],
+          }
+        } catch (error) {
+          return `拒绝：${error instanceof Error ? error.message : String(error)}`
+        }
+        let budget = { calls: 0, ms: 0, bytes: 0 }
+        if (args.budget) {
+          try {
+            budget = JSON.parse(args.budget) as typeof budget
+          } catch {
+            return '拒绝：budget 必须是 JSON 对象'
+          }
+        }
+        const result = validateJudgment(input, {
+          finding,
+          observationExists: (id) => watch.store.observationById(id) !== undefined,
+          now: at(watch),
+          model: watch.config.modelLabel ?? 'model',
+          budget,
+        })
+        if (!result.ok || !result.judgment) return `拒绝：${result.errors.join('；')}`
+        const path = watch.config.judgmentsPath ?? join(dirname(watch.config.evidencePath), 'judgments.jsonl')
+        appendJudgment(path, result.judgment)
+        return `已记录调查判断 ${result.judgment.id}（source=model，confidence=${result.judgment.confidence}）；发现/基线/策略未改动。`
       },
     }),
   )

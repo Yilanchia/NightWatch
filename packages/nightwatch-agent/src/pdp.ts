@@ -35,6 +35,7 @@ export const WATCH_ACTIONS: Readonly<Record<string, ToolAction>> = {
   watch_apply_fix: { tool: 'watch_apply_fix', operation: 'write', resources: ['sshd_config'], approval: 'owner' },
   // Local inference annotations only; never part of the evidence log.
   watch_investigate_note: { tool: 'watch_investigate_note', operation: 'note', resources: ['investigation-notes'], approval: 'none' },
+  watch_investigate_judgment: { tool: 'watch_investigate_judgment', operation: 'note', resources: ['judgments'], approval: 'none' },
 }
 
 export interface PolicyDecision {

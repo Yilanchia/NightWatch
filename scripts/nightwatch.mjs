@@ -503,6 +503,7 @@ async function panelCommand(home, port, host) {
       store,
       config: coreConfig(home),
       port: listenPort,
+      judgmentsPath: join(home, 'judgments.jsonl'),
       ...(host ? { host } : {}),
     })
     console.log(`panel ${server.url}（只读）`)

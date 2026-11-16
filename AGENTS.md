@@ -33,10 +33,10 @@
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
 
-最近验证（2026-11-16）：`pnpm test` **89 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
+最近验证（2026-11-16）：`pnpm test` **95 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
 `node scripts/egress-probe.mjs` 正反两组通过；
 `nightwatch acceptance` 用验收机真实证据副本通过（7 天 run/日报、最近 ok、重建一致）；版本 `0.1.0`；
-`nightwatch panel` 在真实证据副本上渲染（2 条风险、7 份日报，只读）；
+`nightwatch panel` 渲染 summary/findings/调查判断/日报；结构化判断 schema 与预算内调查循环有单测；
 `tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate` 跑通；
 `inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
 
@@ -61,7 +61,9 @@
 | `src/investigator.ts` | 有界调查：调用/墙钟/字节预算、UNTRUSTED 前缀、推断注释写独立 JSONL |
 | `src/selfcheck.ts` | 强制力探针：真实 dispatch 验证工具面、destructive 拒绝门、名称盲区 |
 | `src/acceptance.ts` | 发布验收：每日 run/日报、最近健康、从日志副本重建一致性 |
-| `src/panel.ts` | 只读面板：本地 HTTP `/api/summary`、`/api/findings`、`/api/timeline`、`/api/reports` + 单页 |
+| `src/judgment.ts` | 结构化调查判断：schema/校验（confirmed 必须指向真实观测）/独立 JSONL |
+| `src/investigation.ts` | 预算内 read→observe→decide 循环 + 可插拔 Reasoner（桩/模型） |
+| `src/panel.ts` | 只读面板：本地 HTTP `/api/summary`、`/api/findings`、`/api/timeline`、`/api/investigations`、`/api/reports` + 单页 |
 | `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
 | `src/transport.ts` | 协调端本地 HTTP 原型（`/v1/bundle`、`/v1/status`）；非 TLS，信任靠登记+签名 |
 | `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
@@ -150,17 +152,19 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（89）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
+- 代码、测试（95）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
 - M0 已落地：`@nightwatch/standalone` + 强制力探针 + 插件级 PDP（未声明/write/需审批一律拒绝；名称盲区已关闭）。
 - Task A 已落地：`projection.ts` + `scripts/egress-probe.mjs`（正反两组通过）。
 - Task B 已落地：`investigator.ts` + `@nightwatch/analyst` + `nightwatch analyst`。
 - Task C 审批元数据已落地：`approval.ts` + `nightwatch approve`；`watch_apply_fix` 必须带有效一次性 approvalId。
+- 结构化判断已落地：`judgment.ts`（confirmed 必须命中真实观测）+ `investigation.ts`（预算内循环，桩 reasoner）
+  + `watch_investigate_judgment` 工具 + 面板 `/api/investigations` 分层展示。
 - 只读面板已落地：`panel.ts` + `nightwatch panel`（本地 HTTP，SSH 隧道，无写接口）。
 - M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
 - 首台验收机 daemon 连续巡检（2026-11-10 → 11-17）；验收命令已在真实证据副本上通过。
 - 发布：`docs/发布-2026-11-17.md`；11-17 最后一轮后跑 `acceptance` 并打 tag；写路径继续关。
-- 下一步：隔离演练、真实模型长期调查、M1 TLS/审批通道；别先接 osquery。
+- 下一步：daemon 事件触发 + 复发/处置后重查、真模型接入、告警层、隔离演练、M1 TLS；别先接 osquery。
 
 ---
 

@@ -4,9 +4,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startPanel } from './panel.js'
+import { appendJudgment, validateJudgment } from './judgment.js'
 import { WatchStore } from './store.js'
 import { localDay } from './time.js'
 import type { WatchConfig } from './tools.js'
+import type { Finding } from './types.js'
 
 test('the read-only panel serves summary, findings, timeline and reports', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'nightwatch-panel-'))
@@ -15,7 +17,7 @@ test('the read-only panel serves summary, findings, timeline and reports', async
   mkdirSync(reportDir, { recursive: true })
   const now = Date.now()
   writeFileSync(join(reportDir, `${localDay(now)}.md`), '# 日报\n', 'utf8')
-  store.append({
+  const finding: Finding = {
     type: 'finding',
     id: 'find-panel',
     at: now,
@@ -29,7 +31,23 @@ test('the read-only panel serves summary, findings, timeline and reports', async
     status: 'candidate',
     firstSeen: now,
     lastSeen: now,
-  })
+  }
+  store.append(finding)
+  const judgmentsPath = join(dir, 'judgments.jsonl')
+  const validated = validateJudgment(
+    {
+      confirmed: [],
+      candidates: [{ text: '可能是数据库服务', likelihood: 'medium' }],
+      counter: [],
+      gaps: ['没有登录日志'],
+      recommendation: '确认后更新基线',
+      disposition: 'propose',
+      confidence: 'medium',
+    },
+    { finding, observationExists: () => false, now, model: 'stub', budget: { calls: 1, ms: 5, bytes: 20 } },
+  )
+  assert.ok(validated.judgment)
+  appendJudgment(judgmentsPath, validated.judgment)
   store.append({
     type: 'run',
     id: 'run-panel',
@@ -50,7 +68,7 @@ test('the read-only panel serves summary, findings, timeline and reports', async
     backupPaths: [],
     backupStaleHours: 36,
   }
-  const panel = await startPanel({ store, config, port: 0, now: () => now })
+  const panel = await startPanel({ store, config, port: 0, now: () => now, judgmentsPath })
   try {
     const summary = (await (await fetch(`${panel.url}/api/summary`)).json()) as {
       open: number
@@ -65,6 +83,13 @@ test('the read-only panel serves summary, findings, timeline and reports', async
 
     const timeline = (await (await fetch(`${panel.url}/api/timeline?key=tcp:3306&days=1`)).json()) as { text: string }
     assert.equal(typeof timeline.text, 'string')
+
+    const investigations = (await (await fetch(`${panel.url}/api/investigations`)).json()) as {
+      investigations: Array<{ latest: { candidates: unknown[]; gaps: string[] } }>
+    }
+    assert.equal(investigations.investigations.length, 1)
+    assert.equal(investigations.investigations[0]?.latest.candidates.length, 1)
+    assert.deepEqual(investigations.investigations[0]?.latest.gaps, ['没有登录日志'])
 
     assert.equal((await fetch(`${panel.url}/api/timeline`)).status, 400)
     assert.equal((await fetch(`${panel.url}/api/nope`)).status, 404)
