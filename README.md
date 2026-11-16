@@ -109,6 +109,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs approve <home> <proposalId> [minutes]` | 生成一次性审批（绑定提案与文件状态） |
 | `node scripts/nightwatch.mjs acceptance <home> [days]` | 发布验收：每日 run/日报 + 从日志重建一致性 |
 | `node scripts/nightwatch.mjs panel <home> [port] [host]` | 只读面板（默认 127.0.0.1:3092，SSH 隧道访问） |
+| `node scripts/nightwatch.mjs investigate <home> [limit]` | 消费 pending 队列（analyst 只读调查；失败保留） |
 | `node scripts/nightwatch.mjs version` | 打印版本 |
 | `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主：强制力探针（工具面 / 拒绝门 / 名称盲区）+ PDP |
 | `node scripts/egress-probe.mjs` | 出口投影探针：假模型端点 + canary，正反两组 |

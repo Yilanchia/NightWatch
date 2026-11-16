@@ -25,6 +25,7 @@
 //   node scripts/nightwatch.mjs acceptance  audit daily runs/reports + rebuild consistency from the log
 //   node scripts/nightwatch.mjs version   print the version
 //   node scripts/nightwatch.mjs panel     read-only local dashboard (SSH tunnel; no writes)
+//   node scripts/nightwatch.mjs investigate  consume pending investigations with the analyst
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -505,6 +506,53 @@ function versionCommand() {
   console.log(`nightwatch ${pkg.version ?? '0.0.0'}`)
 }
 
+/** Consume pending investigations with the model-backed analyst. Leaves failures pending. */
+async function investigate(home, limit) {
+  const { store } = await openReadCore(home)
+  try {
+    const consumer = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'consumer.js')).href)
+    const result = await consumer.consumePending({
+      pendingPath: join(home, 'investigations-pending.jsonl'),
+      judgmentsPath: join(home, 'judgments.jsonl'),
+      find: (id) => store.findings('id = ?', id)[0],
+      limit: Number(limit ?? 10),
+      now: () => Date.now(),
+      run: async (finding) => {
+        const prompt =
+          `调查发现 ${finding.id}（${finding.kind}，key=${finding.key}，标题「${finding.title}」）。` +
+          '只读：用 watch_health、watch_timeline、watch_diff 核查；然后用 watch_investigate_judgment ' +
+          `提交结构化判断（findingId=${finding.id}）。不要执行写操作，不要修改发现或基线。`
+        const child = spawn(process.execPath, [join(root, 'scripts', 'nightwatch.mjs'), 'analyst', home, prompt], {
+          cwd: root,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        let output = ''
+        child.stdout.on('data', (chunk) => (output += chunk))
+        child.stderr.on('data', (chunk) => (output += chunk))
+        const code = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            child.kill()
+            reject(new Error('analyst 超时（10 分钟）'))
+          }, 10 * 60_000)
+          child.on('error', reject)
+          child.on('exit', (exitCode) => {
+            clearTimeout(timer)
+            resolve(exitCode ?? 1)
+          })
+        })
+        if (code !== 0) throw new Error(`analyst 失败（exit ${code}）：${output.split('\n').slice(-6).join(' | ')}`)
+      },
+    })
+    for (const detail of result.details) {
+      console.log(`${detail.ok ? 'DONE' : 'KEEP'} ${detail.findingId}${detail.reason ? ` — ${detail.reason}` : ''}`)
+    }
+    console.log(`调查队列：尝试 ${result.attempted}，完成 ${result.completed}，失败 ${result.failed}，剩余 ${result.remaining}`)
+    if (result.remaining > 0) process.exitCode = result.completed > 0 ? 0 : 1
+  } finally {
+    store.close()
+  }
+}
+
 /** Read-only local panel over the materialized view (reach it through an SSH tunnel). */
 async function panelCommand(home, port, host) {
   const { store } = await openReadCore(home)
@@ -614,6 +662,10 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await approveCommand(home, process.argv[4], process.argv[5])
+  } else if (command === 'investigate') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await investigate(home, process.argv[4])
   } else if (command === 'tick' || command === 'baseline') {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
