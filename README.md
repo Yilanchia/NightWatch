@@ -23,7 +23,7 @@
 
 ## 现状（2026-11-12，评审后 + 首台验收机）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**跨端摘要与协调端原型**（节点身份 + `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate`，证据不出节点）；**最小宿主** `@nightwatch/standalone` + 强制力探针 + 插件级 PDP；**有界调查** `@nightwatch/analyst` + investigator（预算、UNTRUSTED 前缀、推断注释）；**一次性审批**（owner key 绑定提案/变更/文件状态，防重放）。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**只读面板** `nightwatch panel`（本地 HTTP + 单页，SSH 隧道访问，无写接口）；**跨端摘要与协调端原型**（节点身份 + `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate`，证据不出节点）；**最小宿主** `@nightwatch/standalone` + 强制力探针 + 插件级 PDP；**有界调查** `@nightwatch/analyst` + investigator（预算、UNTRUSTED 前缀、推断注释）；**一次性审批**（owner key 绑定提案/变更/文件状态，防重放）。
 
 **首台 Linux 验收机**已上线（`NODE_A_IP`，Ubuntu 22.04），内置 `daemon` 每 24h 巡检，7 天观察从 2026-11-10 开始。部署与验收点见 [docs/服务器验收-2026-11-10.md](docs/服务器验收-2026-11-10.md)。
 
@@ -108,6 +108,7 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs analyst <home> "<任务>"` | 有界只读调查（analyst bundle：预算 + 推断注释） |
 | `node scripts/nightwatch.mjs approve <home> <proposalId> [minutes]` | 生成一次性审批（绑定提案与文件状态） |
 | `node scripts/nightwatch.mjs acceptance <home> [days]` | 发布验收：每日 run/日报 + 从日志重建一致性 |
+| `node scripts/nightwatch.mjs panel <home> [port] [host]` | 只读面板（默认 127.0.0.1:3092，SSH 隧道访问） |
 | `node scripts/nightwatch.mjs version` | 打印版本 |
 | `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主：强制力探针（工具面 / 拒绝门 / 名称盲区）+ PDP |
 | `node scripts/egress-probe.mjs` | 出口投影探针：假模型端点 + canary，正反两组 |

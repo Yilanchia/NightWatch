@@ -24,6 +24,7 @@
 //   node scripts/nightwatch.mjs approve   issue a one-time owner approval for one repair proposal
 //   node scripts/nightwatch.mjs acceptance  audit daily runs/reports + rebuild consistency from the log
 //   node scripts/nightwatch.mjs version   print the version
+//   node scripts/nightwatch.mjs panel     read-only local dashboard (SSH tunnel; no writes)
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -492,6 +493,33 @@ function versionCommand() {
   console.log(`nightwatch ${pkg.version ?? '0.0.0'}`)
 }
 
+/** Read-only local panel over the materialized view (reach it through an SSH tunnel). */
+async function panelCommand(home, port, host) {
+  const { store } = await openReadCore(home)
+  try {
+    const panel = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'panel.js')).href)
+    const listenPort = Number(port ?? 3092)
+    const server = await panel.startPanel({
+      store,
+      config: coreConfig(home),
+      port: listenPort,
+      ...(host ? { host } : {}),
+    })
+    console.log(`panel ${server.url}（只读）`)
+    console.log(`SSH 隧道：ssh -L ${listenPort}:127.0.0.1:${listenPort} root@<host>，然后打开 http://127.0.0.1:${listenPort}`)
+    console.log('Ctrl+C 停止。面板不采集、不执行、不写。')
+    await new Promise((resolve) => {
+      const stop = () => {
+        server.close().then(resolve, resolve)
+      }
+      process.on('SIGINT', stop)
+      process.on('SIGTERM', stop)
+    })
+  } finally {
+    store.close()
+  }
+}
+
 /**
  * Built-in scheduler. Holds the evidence lock for its lifetime (so no second writer can interleave),
  * catches up a missed run once after a restart, and never overlaps inspections.
@@ -543,6 +571,10 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await acceptanceCommand(home, process.argv[4])
+  } else if (command === 'panel') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await panelCommand(home, process.argv[4], process.argv[5])
   } else if (command === 'setup') {
     await setup(at)
     console.log(`nightwatch: profile ready at ${join(at.home, 'profiles', profile)}`)
