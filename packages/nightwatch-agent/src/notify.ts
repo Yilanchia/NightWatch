@@ -1,4 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { dirname } from 'node:path'
 import { redactText } from './projection.js'
 import type { Alert } from './alerts.js'
@@ -227,6 +229,55 @@ export function fileSink(path: string): NotificationSink {
     async send(message) {
       mkdirSync(dirname(path), { recursive: true })
       appendFileSync(path, `${JSON.stringify({ at: Date.now(), ...message })}\n`, 'utf8')
+    },
+  }
+}
+
+/**
+ * Device-channel push over built-in HTTPS (F2 stage 1). Zero new dependencies: node:https/http
+ * only. The projected (already redacted) message is POSTed to a relay the owner controls; `format`
+ * shapes the body for common phone-push bots. Self-built: it never links @fairy/link. The two-way
+ * confirm (phone approves inline) is stage 2; here confirm still falls back to the CLI approval.
+ */
+export type PushFormat = 'json' | 'wecom' | 'feishu' | 'text'
+
+/** Shape the redacted message for the target relay. */
+export function shapePush(message: NotificationMessage, format: PushFormat): { body: string; contentType: string } {
+  switch (format) {
+    case 'wecom':
+      return { body: JSON.stringify({ msgtype: 'text', text: { content: message.line } }), contentType: 'application/json' }
+    case 'feishu':
+      return { body: JSON.stringify({ msg_type: 'text', content: { text: message.line } }), contentType: 'application/json' }
+    case 'text':
+      return { body: message.line, contentType: 'text/plain; charset=utf-8' }
+    default:
+      return { body: JSON.stringify({ type: 'nightwatch-alert', at: Date.now(), ...message }), contentType: 'application/json' }
+  }
+}
+
+export function httpsSink(url: string, format: PushFormat = 'json'): NotificationSink {
+  const target = new URL(url)
+  return {
+    name: `push:${target.host}`,
+    async send(message) {
+      const { body, contentType } = shapePush(message, format)
+      const requester = target.protocol === 'http:' ? httpRequest : httpsRequest
+      await new Promise<void>((resolve, reject) => {
+        const request = requester(
+          target,
+          { method: 'POST', headers: { 'content-type': contentType, 'content-length': Buffer.byteLength(body) } },
+          (response) => {
+            const code = response.statusCode ?? 0
+            response.resume()
+            if (code >= 200 && code < 300) resolve()
+            else reject(new Error(`推送返回 HTTP ${code}`))
+          },
+        )
+        request.on('error', reject)
+        request.setTimeout(10_000, () => request.destroy(new Error('推送超时')))
+        request.write(body)
+        request.end()
+      })
     },
   }
 }

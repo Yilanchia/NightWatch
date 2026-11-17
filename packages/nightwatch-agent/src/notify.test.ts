@@ -1,15 +1,18 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   DEFAULT_POLICY,
   decideLevel,
   fileSink,
+  httpsSink,
   loadSent,
   planDeliveries,
   runNotify,
+  shapePush,
   summarize,
   withinQuietHours,
   type NotifyPolicy,
@@ -125,5 +128,40 @@ test('runNotify delivers through the sink and records sends so a rerun does not 
     assert.equal(second.suppressed, 1)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('shapePush formats for common phone-push bots', () => {
+  const message = summarize('n', alert('a1', 'f1'), 'urgent', finding('f1'))
+  assert.deepEqual(JSON.parse(shapePush(message, 'wecom').body), { msgtype: 'text', text: { content: message.line } })
+  assert.deepEqual(JSON.parse(shapePush(message, 'feishu').body), { msg_type: 'text', content: { text: message.line } })
+  assert.equal(shapePush(message, 'text').body, message.line)
+  assert.equal(JSON.parse(shapePush(message, 'json').body).type, 'nightwatch-alert')
+})
+
+test('httpsSink POSTs the projected message and throws on a non-2xx reply', async () => {
+  const received: string[] = []
+  let replyCode = 200
+  const server = createServer((request, response) => {
+    let body = ''
+    request.on('data', (chunk) => (body += chunk))
+    request.on('end', () => {
+      received.push(body)
+      response.writeHead(replyCode)
+      response.end('ok')
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  try {
+    const port = (server.address() as { port: number }).port
+    const message = summarize('n', alert('a1', 'f1'), 'urgent', finding('f1'))
+    await httpsSink(`http://127.0.0.1:${port}/push`, 'wecom').send(message)
+    assert.equal(received.length, 1)
+    assert.equal(JSON.parse(received[0]!).text.content, message.line)
+
+    replyCode = 500
+    await assert.rejects(() => httpsSink(`http://127.0.0.1:${port}/push`, 'wecom').send(message), /HTTP 500/)
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })

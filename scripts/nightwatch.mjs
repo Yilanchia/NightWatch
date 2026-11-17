@@ -271,6 +271,23 @@ async function queuePending(home, findings) {
   const alerts = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'alerts.js')).href)
   const raised = alerts.enqueueAlerts(join(home, 'alerts.jsonl'), findings, Date.now())
   if (raised.length > 0) console.log(`nightwatch: raised ${raised.length} deterministic alert(s)`)
+  // Push the fresh alerts through the notification discipline when a device channel is configured.
+  if (raised.length > 0 && process.env.NIGHTWATCH_PUSH_URL) {
+    try {
+      await notifyCommand(home)
+    } catch (error) {
+      console.error(`nightwatch: notify push failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
+/** Pick the notification sink from the environment. Default is a local file (no egress). */
+async function pickSink(notify, home) {
+  if (process.env.NIGHTWATCH_PUSH_URL) {
+    return notify.httpsSink(process.env.NIGHTWATCH_PUSH_URL, process.env.NIGHTWATCH_PUSH_FORMAT ?? 'json')
+  }
+  if (process.env.NIGHTWATCH_NOTIFY_CONSOLE === '1') return notify.consoleSink
+  return notify.fileSink(join(home, 'notifications-out.jsonl'))
 }
 
 async function tick(home) {
@@ -495,6 +512,31 @@ async function pullCorrelate(configFile) {
   } else {
     console.log(`跨节点高危 ${alerts.length} 条：`)
     for (const alert of alerts) console.log(`  [${alert.severity}] ${alert.title}（${alert.key}）— ${alert.nodes.length} 台：${alert.nodes.join(', ')}`)
+    // Push new cross-node alerts to the device channel when configured; dedupe by fact key so a
+    // rerun does not re-spam. Coordinator data is already projection-safe (bundles carry no facts).
+    if (process.env.NIGHTWATCH_PUSH_URL) {
+      const notify = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'notify.js')).href)
+      const notifiedPath = join(dirname(stateFile), 'coordinator-notified.json')
+      const notified = existsSync(notifiedPath) ? JSON.parse(readFileSync(notifiedPath, 'utf8')) : {}
+      const sink = notify.httpsSink(process.env.NIGHTWATCH_PUSH_URL, process.env.NIGHTWATCH_PUSH_FORMAT ?? 'json')
+      let pushed = 0
+      for (const alert of alerts) {
+        if (notified[alert.key]) continue
+        const message = {
+          node: '协调端', level: 'urgent', severity: alert.severity, key: alert.key, title: alert.title, reason: 'new',
+          line: `[协调端] 跨 ${alert.nodes.length} 台·${alert.title}（${alert.key}）— ${alert.nodes.join(', ')}`,
+        }
+        try {
+          await sink.send(message)
+          notified[alert.key] = Date.now()
+          pushed += 1
+        } catch (error) {
+          console.error(`× 推送失败（${alert.key}）：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      writeFileSync(notifiedPath, `${JSON.stringify(notified, null, 2)}\n`, 'utf8')
+      if (pushed > 0) console.log(`已推送 ${pushed} 条跨节点告警到 ${sink.name}`)
+    }
   }
   console.log(`\n协调端状态：${stateFile}`)
   if (alerts.length > 0) process.exitCode = 2
@@ -724,7 +766,7 @@ async function notifyCommand(home) {
     }
     const node = identity.ensureIdentity(home).id
     const sentPath = join(home, 'notifications.jsonl')
-    const sink = process.env.NIGHTWATCH_NOTIFY_CONSOLE === '1' ? notify.consoleSink : notify.fileSink(join(home, 'notifications-out.jsonl'))
+    const sink = await pickSink(notify, home)
     const result = await notify.runNotify(
       { node, openAlerts: open, sent: notify.loadSent(sentPath), findings, judgments: latest, now: Date.now(), policy },
       sink,

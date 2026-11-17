@@ -34,7 +34,7 @@
 | 7 天验收机（node A） | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`；`nightwatch-daemon.service` 每 1440 分钟巡检，`nightwatch-panel.service` 只读面板仅绑 `127.0.0.1:3092`；节点 id `nw-LFW505Jt0c3B`；见 `docs/服务器验收-2026-11-10.md`、`docs/发布-2026-11-17.md` |
 | 第二节点（node B） | `NODE_B_IP`（Ubuntu 24.04 / 2C2G，同机跑博客 + 外部项目，**只读不碰**），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，`nightwatch-daemon.service` 每 1440 分钟；节点 id `nw-d25kRkC80eDT`。两台都用 `~/.ssh/nightwatch_deploy` key 登录（已追加进各自 root 的 authorized_keys，未碰 sshd） |
 
-最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **108 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
+最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **110 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
 **两节点跨端已打通**：node A + node B 各 `export` 签名摘要，经 SSH 拉到本地协调端 `pull-correlate`，关联出 2 条跨节点高危（两台都 `PasswordAuthentication yes` + `PermitRootLogin yes`）；走 SSH 不走非 TLS HTTP，bundle 无原始事实/证据；
 验收机 7 天观察完成（11-10 → 11-17，8 轮全部 ok、8 份日报），`acceptance` 本机副本与服务器上各一次全 PASS；
 验收机 daemon 已换新代码（13:56），只读面板 `nightwatch-panel.service` 常驻 `127.0.0.1:3092`；
@@ -67,7 +67,7 @@
 | `src/investigation.ts` | 预算内 read→observe→decide 循环 + 可插拔 Reasoner（桩/模型） |
 | `src/trigger.ts` | 新发现/复发自动入队 pending；按 findingId 去重、done 出队 |
 | `src/alerts.ts` | 确定性高危告警队列：severity>=high、去重、复发单列、ack 出队 |
-| `src/notify.ts` | 出站通知：告警纪律（分级/限频/安静时段/升级）+ 投影脱敏 + 可插拔 sink；默认只写本地文件不外发 |
+| `src/notify.ts` | 出站通知：告警纪律（分级/限频/安静时段/升级）+ 投影脱敏 + 可插拔 sink（console/file/**httpsSink 设备推送**，支持 json/wecom/feishu/text）；默认只写本地文件 |
 | `src/consumer.ts` | pending 消费者：跑调查，只有真的落 judgment 才 done，失败保留 |
 | `src/panel.ts` | 只读面板：本地 HTTP `/api/summary`、`/api/findings`、`/api/timeline`、`/api/investigations`、`/api/reports` + 单页 |
 | `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
@@ -161,7 +161,7 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（108）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
+- 代码、测试（110）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
 - M0 已落地：`@nightwatch/standalone` + 强制力探针 + 插件级 PDP（未声明/write/需审批一律拒绝；名称盲区已关闭）。
 - Task A 已落地：`projection.ts` + `scripts/egress-probe.mjs`（正反两组通过）。
@@ -175,6 +175,9 @@ node scripts/nightwatch.mjs dump
 - 只读面板已落地：`panel.ts` + `nightwatch panel`（本地 HTTP，SSH 隧道，无写接口）。
 - M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
 - 首台验收机 daemon 连续巡检（2026-11-10 → 11-17，8 轮全 ok）；`acceptance` 全 PASS。
+- F2 出站通道 stage 1 已落地（2026-11-17）：`notify.httpsSink` 纯内置 HTTPS 推送（json/wecom/feishu/text），
+  `NIGHTWATCH_PUSH_URL` + `NIGHTWATCH_PUSH_FORMAT` 配置；节点 `queuePending` 入队高危后自动推、协调端 `pull-correlate` 推跨节点高危（按 key 去重）；
+  真机验证企业微信格式两条跨端告警成功投递、重跑去重。双向确认（手机点批准）+ 原生 web-push 是 stage 2。
 - 两节点跨端打通（2026-11-17）：node B（`NODE_B_IP`，博客+外部项目 同机，只读部署）上线并常驻 daemon（14.6M 内存）；
   `coordinator.crossNodeAlerts` + `nightwatch pull-correlate`（SSH 拉摘要→ingest→关联，跨节点高危退出码 2）。
   协调端建议放本地；`ingestBundle` 拒旧序号、`verifyBundle` 可选新鲜度已就位。节点配置见 `nodes.example.json`（占位，不含真 IP/密钥）。
