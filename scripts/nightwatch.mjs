@@ -792,6 +792,7 @@ async function panelCommand(home, port, host) {
       judgmentsPath: join(home, 'judgments.jsonl'),
       pendingPath: join(home, 'investigations-pending.jsonl'),
       alertsPath: join(home, 'alerts.jsonl'),
+      ...(process.env.NIGHTWATCH_COORD_STATE ? { coordinatorStatePath: resolve(process.env.NIGHTWATCH_COORD_STATE) } : {}),
       ...(host ? { host } : {}),
     })
     console.log(`panel ${server.url}（只读）`)

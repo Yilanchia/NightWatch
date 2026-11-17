@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { inspectionHealth } from './inspect.js'
 import { loadOpenAlerts } from './alerts.js'
+import { correlate, crossNodeAlerts, type CoordinatorState } from './coordinator.js'
 import { judgmentsByFinding } from './judgment.js'
 import { loadPending } from './trigger.js'
 import type { WatchStore } from './store.js'
@@ -30,6 +31,8 @@ export interface PanelOptions {
   readonly pendingPath?: string
   /** alerts.jsonl; API returns open alerts when present. */
   readonly alertsPath?: string
+  /** Coordinator state (coordinator-state.json from pull-correlate); enables the cross-node view. */
+  readonly coordinatorStatePath?: string
 }
 
 export interface PanelServer {
@@ -181,6 +184,43 @@ export async function startPanel(options: PanelOptions): Promise<PanelServer> {
         json(response, 200, { investigations })
         return
       }
+      if (url.pathname === '/api/coordinator') {
+        const path = options.coordinatorStatePath
+        if (!path || !existsSync(path)) {
+          json(response, 200, { present: false, nodes: [], groups: [], crossNode: [] })
+          return
+        }
+        let state: CoordinatorState
+        try {
+          state = JSON.parse(readFileSync(path, 'utf8')) as CoordinatorState
+        } catch (error) {
+          json(response, 200, { present: false, error: error instanceof Error ? error.message : String(error), nodes: [], groups: [], crossNode: [] })
+          return
+        }
+        const groups = correlate(state)
+        json(response, 200, {
+          present: true,
+          updatedAt: state.updatedAt,
+          nodes: Object.entries(state.nodes).map(([id, node]) => ({
+            id,
+            platform: node.capabilities.platform,
+            collectors: node.capabilities.collectors,
+            lastSeen: node.lastSeen,
+            lastSeq: node.lastSeq,
+            lastRunAt: node.lastRunAt,
+            lastHealth: node.lastHealth,
+          })),
+          groups: groups.map((group) => ({
+            key: group.key,
+            kind: group.kind,
+            crossNode: group.crossNode,
+            nodes: group.nodes,
+            findings: group.findings.map((finding) => ({ nodeId: finding.nodeId, severity: finding.severity, title: finding.title, status: finding.status })),
+          })),
+          crossNode: crossNodeAlerts(groups),
+        })
+        return
+      }
       if (url.pathname === '/api/reports') {
         json(response, 200, { reports: reports(options.config) })
         return
@@ -236,6 +276,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px}
 <h1>守夜人 · 只读面板</h1>
 <div class="sub">数据来自 watch.jsonl 的物化视图；面板不采集、不执行、不写。通过 SSH 隧道访问。</div>
 <div class="cards" id="cards"></div>
+<div id="coordinator-wrap" style="display:none"><h2>多端防护网</h2><div id="coordinator"></div></div>
 <h2>未关闭风险</h2>
 <table><thead><tr><th>严重度</th><th>发现</th><th>状态</th><th>首次</th><th>最近</th></tr></thead><tbody id="findings"></tbody></table>
 <h2>告警</h2><div id="alerts"></div>
@@ -303,6 +344,29 @@ async function summary(){
   document.getElementById('reports').innerHTML=j.reports.length?j.reports.map(function(x){
     return '<tr><td>'+esc(x.day)+'</td><td>'+esc(x.bytes)+' B</td></tr>'}).join(''):'<tr><td colspan="2">没有日报</td></tr>';
   document.getElementById('foot').textContent='刷新于 '+ts(j.at)+'（每 30 秒自动刷新）';
+  coordinator();
+}
+async function coordinator(){
+  var c;try{c=await (await fetch('/api/coordinator')).json()}catch(e){return}
+  var wrap=document.getElementById('coordinator-wrap');
+  if(!c.present||!c.nodes.length){wrap.style.display='none';return}
+  wrap.style.display='';
+  var html='';
+  // cross-node high findings first — the headline of a multi-node net
+  if(c.crossNode.length){
+    html+='<div class="card" style="margin-bottom:10px;border-color:var(--bad)"><div class="k bad">跨节点高危（多台同时命中）</div><ul>'+
+      c.crossNode.map(function(a){return '<li class="bad"><strong>'+esc(a.title)+'</strong> <span class="sub">'+esc(a.key)+' · '+a.nodes.length+' 台：'+esc(a.nodes.join(', '))+'</span></li>'}).join('')+'</ul></div>';
+  }
+  // nodes
+  html+='<div class="card" style="margin-bottom:10px"><div class="k">节点（'+c.nodes.length+'）</div><ul>'+
+    c.nodes.map(function(n){return '<li>'+esc(n.id)+' <span class="sub">'+esc(n.platform||'?')+' · '+esc((n.collectors||[]).join('/'))+
+      ' · 最近 '+ts(n.lastSeen)+' · seq '+esc(n.lastSeq)+(n.lastHealth?' · '+esc(n.lastHealth):'')+'</span></li>'}).join('')+'</ul></div>';
+  // per-fact grouping: which fact appears on how many nodes
+  html+='<table><thead><tr><th>事实</th><th>节点</th><th>发现</th></tr></thead><tbody>'+
+    c.groups.map(function(g){return '<tr><td>'+(g.crossNode?'<span class="badge bad">跨端</span> ':'')+esc(g.key)+'<div class="sub">'+esc(g.kind)+'</div></td>'+
+      '<td>'+g.nodes.length+'<div class="sub">'+esc(g.nodes.join(', '))+'</div></td>'+
+      '<td>'+g.findings.map(function(f){return esc(f.severity)+' '+esc(f.title)}).join('<br>')+'</td></tr>'}).join('')+'</tbody></table>';
+  document.getElementById('coordinator').innerHTML=html;
 }
 async function timeline(){
   var key=document.getElementById('key').value.trim();if(!key)return;

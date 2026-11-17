@@ -101,3 +101,55 @@ test('the read-only panel serves summary, findings, timeline and reports', async
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
+
+test('the panel surfaces the cross-node coordinator view when a state file is given', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-panel-coord-'))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'), databasePath: join(dir, 'watch.db'), reportDir: join(dir, 'watch-reports'),
+    ports: true, ssh: true, backup: false, backupPaths: [], backupStaleHours: 36,
+  }
+  const node = (collectors: string[]) => ({ publicKeyPem: 'x', firstSeen: 0, lastSeen: 1, registeredAt: 0, lastSeq: 1, capabilities: { platform: 'linux', collectors, backupPaths: false }, lastHealth: 'ok' })
+  const finding = (nodeId: string) => ({ id: 'f1', key: 'ssh:permitrootlogin', kind: 'ssh_root_login', severity: 'high', status: 'candidate', title: 'SSH 允许 root 登录', nodeId, ingestedAt: 0 })
+  const statePath = join(dir, 'coordinator-state.json')
+  writeFileSync(statePath, JSON.stringify({
+    version: 1,
+    nodes: { A: node(['ssh']), B: node(['ssh']) },
+    findings: { 'A:f1': finding('A'), 'B:f1': finding('B') },
+    updatedAt: 1,
+  }), 'utf8')
+  const panel = await startPanel({ store, config, coordinatorStatePath: statePath })
+  try {
+    const coord = (await (await fetch(`${panel.url}/api/coordinator`)).json()) as {
+      present: boolean; nodes: unknown[]; crossNode: Array<{ key: string; nodes: string[] }>
+    }
+    assert.equal(coord.present, true)
+    assert.equal(coord.nodes.length, 2)
+    assert.equal(coord.crossNode.length, 1)
+    assert.equal(coord.crossNode[0]?.key, 'ssh:permitrootlogin')
+    assert.deepEqual(coord.crossNode[0]?.nodes, ['A', 'B'])
+  } finally {
+    await panel.close()
+    store.close()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
+})
+
+test('the coordinator view is absent (present:false) when no state file is configured', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightwatch-panel-nocoord-'))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'), databasePath: join(dir, 'watch.db'), reportDir: join(dir, 'watch-reports'),
+    ports: true, ssh: true, backup: false, backupPaths: [], backupStaleHours: 36,
+  }
+  const panel = await startPanel({ store, config })
+  try {
+    const coord = (await (await fetch(`${panel.url}/api/coordinator`)).json()) as { present: boolean; nodes: unknown[] }
+    assert.equal(coord.present, false)
+    assert.equal(coord.nodes.length, 0)
+  } finally {
+    await panel.close()
+    store.close()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
+})

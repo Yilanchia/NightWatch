@@ -34,7 +34,7 @@
 | 7 天验收机（node A） | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`；`nightwatch-daemon.service` 每 1440 分钟巡检，`nightwatch-panel.service` 只读面板仅绑 `127.0.0.1:3092`；节点 id `nw-LFW505Jt0c3B`；见 `docs/服务器验收-2026-11-10.md`、`docs/发布-2026-11-17.md` |
 | 第二节点（node B） | `NODE_B_IP`（Ubuntu 24.04 / 2C2G，同机跑博客 + 外部项目，**只读不碰**），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，`nightwatch-daemon.service` 每 1440 分钟；节点 id `nw-d25kRkC80eDT`。两台都用 `~/.ssh/nightwatch_deploy` key 登录（已追加进各自 root 的 authorized_keys，未碰 sshd） |
 
-最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **110 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
+最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **112 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
 **两节点跨端已打通**：node A + node B 各 `export` 签名摘要，经 SSH 拉到本地协调端 `pull-correlate`，关联出 2 条跨节点高危（两台都 `PasswordAuthentication yes` + `PermitRootLogin yes`）；走 SSH 不走非 TLS HTTP，bundle 无原始事实/证据；
 验收机 7 天观察完成（11-10 → 11-17，8 轮全部 ok、8 份日报），`acceptance` 本机副本与服务器上各一次全 PASS；
 验收机 daemon 已换新代码（13:56），只读面板 `nightwatch-panel.service` 常驻 `127.0.0.1:3092`；
@@ -69,7 +69,7 @@
 | `src/alerts.ts` | 确定性高危告警队列：severity>=high、去重、复发单列、ack 出队 |
 | `src/notify.ts` | 出站通知：告警纪律（分级/限频/安静时段/升级）+ 投影脱敏 + 可插拔 sink（console/file/**httpsSink 设备推送**，支持 json/wecom/feishu/text）；默认只写本地文件 |
 | `src/consumer.ts` | pending 消费者：跑调查，只有真的落 judgment 才 done，失败保留 |
-| `src/panel.ts` | 只读面板：本地 HTTP `/api/summary`、`/api/findings`、`/api/timeline`、`/api/investigations`、`/api/reports` + 单页 |
+| `src/panel.ts` | 只读面板：`/api/summary`、`/findings`、`/timeline`、`/investigations`、`/alerts`、`/pending`、`/reports`、**`/coordinator`（多端防护网：节点清单 + 跨节点关联，跨端高危高亮）** + 单页 |
 | `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
 | `src/transport.ts` | 协调端本地 HTTP 原型（`/v1/bundle`、`/v1/status`）；非 TLS，信任靠登记+签名 |
 | `src/tools.ts` | **薄适配层**：`watch_*` 工具，只转调 `inspect.ts` / `timeline.ts`，不含业务规则 |
@@ -139,7 +139,7 @@ node scripts/egress-probe.mjs                # 出口投影探针：假模型端
 node scripts/nightwatch.mjs analyst <home> "<任务>"  # 有界只读调查（headless + analyst bundle）
 node scripts/nightwatch.mjs approve <home> <proposalId> [minutes]  # 一次性审批（绑定提案+文件状态）
 node scripts/nightwatch.mjs acceptance <home> [days]  # 发布验收：每日 run/日报 + 重建一致性
-node scripts/nightwatch.mjs panel <home> [port] [host]  # 只读面板（默认 127.0.0.1:3092，SSH 隧道）
+node scripts/nightwatch.mjs panel <home> [port] [host]  # 只读面板（默认 127.0.0.1:3092，SSH 隧道）；设 NIGHTWATCH_COORD_STATE=<coordinator-state.json> 开"多端防护网"跨端视图
 node scripts/nightwatch.mjs investigate <home> [limit]  # 消费 pending 队列（analyst 跑调查，失败保留）
 node scripts/nightwatch.mjs alerts <home> [ack <id>]  # 列出/确认确定性告警
 node scripts/nightwatch.mjs version                   # 版本
@@ -161,7 +161,7 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（110）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
+- 代码、测试（112）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
 - M0 已落地：`@nightwatch/standalone` + 强制力探针 + 插件级 PDP（未声明/write/需审批一律拒绝；名称盲区已关闭）。
 - Task A 已落地：`projection.ts` + `scripts/egress-probe.mjs`（正反两组通过）。
