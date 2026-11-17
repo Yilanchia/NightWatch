@@ -163,8 +163,18 @@ export interface VerifyResult {
   readonly reason?: string
 }
 
-/** Check the signature and that the id matches the embedded public key. */
-export function verifyBundle(bundle: NodeBundle): VerifyResult {
+/** Optional freshness bounds; only checked when `now` is given, so `verifyBundle(bundle)` is unchanged. */
+export interface VerifyOptions {
+  /** Receiver's clock. Freshness is skipped entirely when absent. */
+  readonly now?: number
+  /** Reject a bundle older than this (age = now - generatedAt). Absent = no age limit. */
+  readonly maxAgeMs?: number
+  /** Reject a bundle whose generatedAt is further than this into the future. Defaults to 2 minutes. */
+  readonly maxSkewMs?: number
+}
+
+/** Check the signature, that the id matches the embedded public key, and (optionally) freshness. */
+export function verifyBundle(bundle: NodeBundle, options: VerifyOptions = {}): VerifyResult {
   const payload = bundle.payload
   if (!payload || typeof payload !== 'object') return { ok: false, reason: 'payload 缺失' }
   if (payload.version !== 1) return { ok: false, reason: `不认识的版本 ${String(payload.version)}` }
@@ -172,6 +182,15 @@ export function verifyBundle(bundle: NodeBundle): VerifyResult {
   if (expected !== payload.node.id) return { ok: false, reason: '节点 ID 与公钥指纹不一致' }
   if (!verifyPayload(payload.node.publicKeyPem, canonicalJson(payload), bundle.signature)) {
     return { ok: false, reason: '签名校验失败' }
+  }
+  if (typeof options.now === 'number') {
+    const skew = options.maxSkewMs ?? 120_000
+    if (payload.generatedAt - options.now > skew) {
+      return { ok: false, reason: 'bundle 生成时间落在未来，疑似时钟偏差或伪造' }
+    }
+    if (options.maxAgeMs !== undefined && options.now - payload.generatedAt > options.maxAgeMs) {
+      return { ok: false, reason: `bundle 已过期：生成于 ${Math.round((options.now - payload.generatedAt) / 1000)} 秒前，超过新鲜度窗口` }
+    }
   }
   return { ok: true }
 }

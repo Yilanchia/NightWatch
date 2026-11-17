@@ -88,12 +88,32 @@ export interface IngestResult {
   readonly nodeId: string
   readonly added: number
   readonly updated: number
+  /** True when the bundle was refused for a seq older than one already seen (replay / reorder). */
   readonly staleSeq: boolean
 }
 
-/** Upsert findings by (node, finding id) for a registered node. Replays are idempotent. */
-export function ingestBundle(state: CoordinatorState, bundle: NodeBundle, now: number): IngestResult {
-  const verdict = verifyBundle(bundle)
+/** Freshness bounds passed through to `verifyBundle`; the receiver's clock is the `now` argument. */
+export interface IngestOptions {
+  readonly maxAgeMs?: number
+  readonly maxSkewMs?: number
+}
+
+/**
+ * Upsert findings by (node, finding id) for a registered node. Duplicate delivery is tolerated
+ * (same seq re-ingests idempotently, per the at-least-once design), but a *strictly older* seq is
+ * refused: a captured old bundle must not be able to resurrect findings the node has since dropped.
+ * A future-dated bundle is refused by the freshness check in `verifyBundle`.
+ */
+export function ingestBundle(state: CoordinatorState, bundle: NodeBundle, now: number, options: IngestOptions = {}): IngestResult {
+  // Freshness (future/age) is deployment policy, so it is opt-in: pass maxSkewMs/maxAgeMs to enable
+  // it. Replay defence by stale seq (below) is an invariant and always on, needing no clock.
+  const checkFreshness = options.maxAgeMs !== undefined || options.maxSkewMs !== undefined
+  const verdict = verifyBundle(
+    bundle,
+    checkFreshness
+      ? { now, maxSkewMs: options.maxSkewMs ?? 120_000, ...(options.maxAgeMs !== undefined ? { maxAgeMs: options.maxAgeMs } : {}) }
+      : {},
+  )
   if (!verdict.ok) return { ok: false, reason: verdict.reason ?? '校验失败', state, nodeId: '', added: 0, updated: 0, staleSeq: false }
 
   const payload = bundle.payload
@@ -105,13 +125,25 @@ export function ingestBundle(state: CoordinatorState, bundle: NodeBundle, now: n
   if (existing.publicKeyPem !== payload.node.publicKeyPem) {
     return { ok: false, reason: `节点 ${nodeId} 的公钥与已登记的不一致`, state, nodeId, added: 0, updated: 0, staleSeq: false }
   }
+  // A strictly lower seq is a stale or replayed delivery; refuse it rather than ingest its findings.
+  // An equal seq is an idempotent duplicate and is allowed through (findings dedupe by time below).
+  if (payload.seq < existing.lastSeq) {
+    return {
+      ok: false,
+      reason: `序号回退：收到 ${payload.seq}，已知最高 ${existing.lastSeq}，疑似重放或乱序投递，拒绝`,
+      state,
+      nodeId,
+      added: 0,
+      updated: 0,
+      staleSeq: true,
+    }
+  }
 
   const latestRun = payload.runs.reduce<number | undefined>(
     (latest, run) => (latest === undefined || run.at > latest ? run.at : latest),
     undefined,
   )
   const lastHealth = payload.runs.length > 0 ? payload.runs[payload.runs.length - 1]!.health : existing.lastHealth
-  const staleSeq = payload.seq < existing.lastSeq
 
   const nodes: Record<string, CoordinatorNode> = {
     ...state.nodes,
@@ -144,7 +176,7 @@ export function ingestBundle(state: CoordinatorState, bundle: NodeBundle, now: n
     }
   }
 
-  return { ok: true, state: { version: 1, nodes, findings, updatedAt: now }, nodeId, added, updated, staleSeq }
+  return { ok: true, state: { version: 1, nodes, findings, updatedAt: now }, nodeId, added, updated, staleSeq: false }
 }
 
 export interface CorrelatedGroup {

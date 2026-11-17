@@ -126,3 +126,68 @@ test('an unregistered node, a tampered bundle or a changed key is refused', () =
     a.cleanup()
   }
 })
+
+/** Build a node with its own store/identity so several bundles with different seqs can be exported. */
+function node(label: string) {
+  const dir = mkdtempSync(join(tmpdir(), `nightwatch-seq-${label}-`))
+  const store = new WatchStore(join(dir, 'watch.jsonl'), join(dir, 'watch.db'))
+  const config: WatchConfig = {
+    evidencePath: join(dir, 'watch.jsonl'),
+    databasePath: join(dir, 'watch.db'),
+    reportDir: join(dir, 'reports'),
+    ports: true,
+    ssh: false,
+    backup: false,
+    backupPaths: [],
+    backupStaleHours: 36,
+  }
+  const finding: Finding = {
+    type: 'finding', id: `find-${label}`, at, kind: 'new_listen_port', severity: 'high',
+    key: 'tcp:3306', title: '新开的监听端口', detail: 'x', epistemic: 'inferred',
+    observationId: 'obs-1', status: 'candidate', firstSeen: at, lastSeen: at,
+  }
+  store.append(finding)
+  const identity = ensureIdentity(dir)
+  const bundle = (seq: number, now: number) => buildBundle(store, config, identity, { now, days: 7, seq })
+  return { identity, bundle, cleanup: () => { store.close(); rmSync(dir, { recursive: true, force: true }) } }
+}
+
+test('a strictly older seq is refused as a replay, but the same seq re-ingests idempotently', () => {
+  const n = node('r')
+  try {
+    const now = at + 2000
+    let state = registerNode(emptyState(now), n.bundle(1, at + 1000), now).state
+
+    const second = ingestBundle(state, n.bundle(2, at + 1500), now)
+    assert.equal(second.ok, true)
+    assert.equal(second.added, 1)
+    state = second.state
+
+    // An older seq (a captured bundle) must not be able to re-insert findings.
+    const replayOld = ingestBundle(state, n.bundle(1, at + 1000), now + 100)
+    assert.equal(replayOld.ok, false)
+    assert.equal(replayOld.staleSeq, true)
+    assert.match(replayOld.reason ?? '', /序号回退/)
+
+    // The same seq is a tolerated duplicate (at-least-once delivery).
+    const dup = ingestBundle(state, n.bundle(2, at + 1500), now + 200)
+    assert.equal(dup.ok, true)
+    assert.equal(dup.added, 0)
+  } finally {
+    n.cleanup()
+  }
+})
+
+test('a future-dated bundle is refused by the freshness check', () => {
+  const n = node('f')
+  try {
+    const now = at + 2000
+    const state = registerNode(emptyState(now), n.bundle(1, at + 1000), now).state
+    // generatedAt is 10 minutes ahead of the receiver's clock: beyond the default 2-minute skew.
+    const future = ingestBundle(state, n.bundle(2, now + 10 * 60_000), now, { maxSkewMs: 120_000 })
+    assert.equal(future.ok, false)
+    assert.match(future.reason ?? '', /未来|时钟/)
+  } finally {
+    n.cleanup()
+  }
+})
