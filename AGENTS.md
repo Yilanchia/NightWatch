@@ -31,15 +31,14 @@
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md` |
-| 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，内置 `daemon` 每 1440 分钟巡检；见 `docs/服务器验收-2026-11-10.md` |
+| 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`；`nightwatch-daemon.service` 每 1440 分钟巡检，`nightwatch-panel.service` 只读面板仅绑 `127.0.0.1:3092`；见 `docs/服务器验收-2026-11-10.md`、`docs/发布-2026-11-17.md` |
 
-最近验证（2026-11-16）：`pnpm test` **98 通过**；`node scripts/nightwatch.mjs smoke` / `selfcheck` 通过；
-`node scripts/egress-probe.mjs` 正反两组通过；
-`nightwatch acceptance` 用验收机真实证据副本通过（7 天 run/日报、最近 ok、重建一致）；版本 `0.1.0`；
-`nightwatch panel` 渲染 summary/findings/告警/待调查/调查判断/日报；`tick`/`daemon` 会入队 pending + 告警；
+最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **98 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
+验收机 7 天观察完成（11-10 → 11-17，8 轮全部 ok、8 份日报），`acceptance` 本机副本与服务器上各一次全 PASS；
+验收机 daemon 已换新代码（13:56），只读面板 `nightwatch-panel.service` 常驻 `127.0.0.1:3092`；
 `nightwatch investigate` 已用真模型在临时副本跑通（1 条 judgment、pending 减 1，失败保留）；
 `tick` / `health` / `timeline` / `daemon` / `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate` 跑通；
-`inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`；验收机由内置 `daemon` 持续巡检。
+`inspect.js` 依赖闭包无 `@deepseek-ai`；Linux SSH 走 `sshd -T`。
 
 ## 代码地图
 
@@ -93,9 +92,9 @@
 
 ## 下一步顺序（观察期内继续开发）
 
-1. **7 天观察进行中**（2026-11-10 → 11-17）：验收机的 `nightwatch-daemon.service` 每 24h 自动巡检；
-   每天看 `health`、`watch-reports/` 与 `journalctl -u nightwatch-daemon`，记录成功/失败、盲区、恢复与复发。
-   不要停 daemon、不要删 `watch.jsonl`。
+1. **7 天观察已完成**（2026-11-10 → 11-17，8 轮全 ok、8 份日报，`acceptance` 全 PASS）；
+   验收机 `nightwatch-daemon.service` 每 24h 继续巡检，`nightwatch-panel.service` 提供只读面板
+   （仅 `127.0.0.1:3092`，SSH 隧道）。仍然：不要停 daemon、不要删 `watch.jsonl`。
 2. **观察期内开发**：
    - ✅ **恢复语义**：端口/公钥被新基线吸收 → `invalid`（报告“已失效”）；监听范围缩回/端口关闭 → `fixed`。
    - ✅ **配置统一**：CLI 与宿主共用 `NIGHTWATCH_*` 环境变量（见 `packages/nightwatch-host/cordis.patch.yml`）。
@@ -171,9 +170,9 @@ node scripts/nightwatch.mjs dump
 - 队列消费者已落地：`consumer.ts` + `nightwatch investigate`；只有真的落 judgment 才 done，失败保留 pending。
 - 只读面板已落地：`panel.ts` + `nightwatch panel`（本地 HTTP，SSH 隧道，无写接口）。
 - M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
-- 首台验收机 daemon 连续巡检（2026-11-10 → 11-17）；验收命令已在真实证据副本上通过。
-- 发布：`docs/发布-2026-11-17.md`；11-17 最后一轮后跑 `acceptance` 并打 tag；写路径继续关。
-- 下一步：复发/处置后重查、限频/安静时段/升级阶梯/出站通道、隔离演练、M1 TLS；别先接 osquery。
+- 首台验收机 daemon 连续巡检（2026-11-10 → 11-17，8 轮全 ok）；`acceptance` 全 PASS。
+- 发布：✅ `v0.1.0` 已于 2026-11-17 打 tag 并部署（`docs/发布-2026-11-17.md`）；写路径继续关。
+- 台面上的活：复发/处置后重查、限频/安静时段/升级阶梯/出站通道、隔离演练、M1 TLS；别先接 osquery。
 
 ---
 
