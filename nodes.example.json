@@ -5,18 +5,17 @@
   "nodes": [
     {
       "id": "acceptance",
-      "ssh": "root@NODE_A_IP",
+      "local": true,
       "home": "/var/lib/nightwatch",
-      "codeDir": "/opt/nightwatch",
-      "key": "~/.ssh/nightwatch_deploy",
-      "days": 7
+      "days": 7,
+      "_comment_local": "the coordinator's own node: exported in-process, no SSH"
     },
     {
       "id": "blog",
       "ssh": "root@NODE_B_IP",
       "home": "/var/lib/nightwatch",
       "codeDir": "/opt/nightwatch",
-      "key": "~/.ssh/nightwatch_deploy",
+      "key": "~/.ssh/nightwatch_coord",
       "days": 7
     }
   ]

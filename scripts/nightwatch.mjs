@@ -461,16 +461,21 @@ async function pullCorrelate(configFile) {
   let state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : coordinator.emptyState(Date.now())
 
   for (const node of nodes) {
-    const id = node.id ?? node.ssh
+    const id = node.id ?? node.ssh ?? 'local'
     const home = node.home ?? '/var/lib/nightwatch'
     const codeDir = node.codeDir ?? '/opt/nightwatch'
     const days = Number(node.days ?? 7)
-    const key = expand(node.key ?? '~/.ssh/nightwatch_deploy')
-    const remote = `cd ${codeDir} && node scripts/nightwatch.mjs export ${home} ${days} 2>/dev/null`
-    const args = ['-i', key, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=15', node.ssh, remote]
     let bundleText
     try {
-      bundleText = execFileSync('ssh', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
+      if (node.local) {
+        // The coordinator is also a node: export its own summary in-process, no SSH to itself.
+        bundleText = execFileSync(process.execPath, [process.argv[1], 'export', home, String(days)], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
+      } else {
+        const key = expand(node.key ?? '~/.ssh/nightwatch_deploy')
+        const remote = `cd ${codeDir} && node scripts/nightwatch.mjs export ${home} ${days} 2>/dev/null`
+        const args = ['-i', key, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=15', node.ssh, remote]
+        bundleText = execFileSync('ssh', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
+      }
     } catch (error) {
       console.error(`× ${id}：拉取失败（${error instanceof Error ? error.message.split('\n')[0] : String(error)}）`)
       continue
