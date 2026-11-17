@@ -27,9 +27,9 @@
 //   node scripts/nightwatch.mjs panel     read-only local dashboard (SSH tunnel; no writes)
 //   node scripts/nightwatch.mjs investigate  consume pending investigations with the analyst
 //   node scripts/nightwatch.mjs alerts     list/ack deterministic alerts
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseEnv } from 'node:util'
@@ -416,6 +416,88 @@ async function correlateCommand(stateFile) {
     console.log(`${group.crossNode ? '[跨端] ' : ''}${group.key}（${group.kind}，${group.nodes.length} 个节点：${group.nodes.join(', ')}）`)
     for (const finding of group.findings) console.log(`  - ${finding.nodeId} [${finding.severity}] ${finding.title}（${finding.status}）`)
   }
+}
+
+/**
+ * Local cross-node orchestration. Reads a nodes.json, pulls each node's SIGNED bundle over SSH
+ * (encrypted channel; the bundle itself carries no raw facts/evidence), registers + ingests them
+ * into a local coordinator state, correlates by fact key, and flags cross-node high findings.
+ * The non-TLS HTTP transport is deliberately not used: SSH is the trusted channel.
+ *
+ * nodes.json:
+ *   { "nodes": [ { "id": "blog", "ssh": "root@1.2.3.4", "home": "/var/lib/nightwatch",
+ *                  "codeDir": "/opt/nightwatch", "key": "~/.ssh/nightwatch_deploy", "days": 7 } ],
+ *     "stateFile": "...optional...", "bundleDir": "...optional..." }
+ */
+async function pullCorrelate(configFile) {
+  if (!existsSync(configFile)) throw new Error(`nodes 配置不存在：${configFile}`)
+  const config = JSON.parse(readFileSync(configFile, 'utf8'))
+  const nodes = Array.isArray(config.nodes) ? config.nodes : []
+  if (nodes.length === 0) throw new Error('nodes.json 里没有节点')
+  const baseDir = dirname(resolve(configFile))
+  const stateFile = resolve(config.stateFile ?? join(baseDir, 'coordinator-state.json'))
+  const bundleDir = resolve(config.bundleDir ?? join(baseDir, 'bundles'))
+  mkdirSync(bundleDir, { recursive: true })
+  const expand = (p) => (p && p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
+
+  const coordinator = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'coordinator.js')).href)
+  let state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : coordinator.emptyState(Date.now())
+
+  for (const node of nodes) {
+    const id = node.id ?? node.ssh
+    const home = node.home ?? '/var/lib/nightwatch'
+    const codeDir = node.codeDir ?? '/opt/nightwatch'
+    const days = Number(node.days ?? 7)
+    const key = expand(node.key ?? '~/.ssh/nightwatch_deploy')
+    const remote = `cd ${codeDir} && node scripts/nightwatch.mjs export ${home} ${days} 2>/dev/null`
+    const args = ['-i', key, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=15', node.ssh, remote]
+    let bundleText
+    try {
+      bundleText = execFileSync('ssh', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
+    } catch (error) {
+      console.error(`× ${id}：拉取失败（${error instanceof Error ? error.message.split('\n')[0] : String(error)}）`)
+      continue
+    }
+    const bundlePath = join(bundleDir, `${id}.json`)
+    writeFileSync(bundlePath, bundleText, 'utf8')
+    let bundle
+    try {
+      bundle = JSON.parse(bundleText)
+    } catch {
+      console.error(`× ${id}：返回的不是合法 bundle，跳过`)
+      continue
+    }
+    const now = Date.now()
+    const registered = coordinator.registerNode(state, bundle, now)
+    if (!registered.ok) {
+      console.error(`× ${id}：登记失败（${registered.reason}）`)
+      continue
+    }
+    state = registered.state
+    const ingested = coordinator.ingestBundle(state, bundle, now)
+    if (!ingested.ok) {
+      console.error(`× ${id}：摄入失败（${ingested.reason}）`)
+      continue
+    }
+    state = ingested.state
+    console.log(`✓ ${ingested.nodeId}（${id}）：新增 ${ingested.added}、更新 ${ingested.updated}`)
+  }
+
+  const temporary = `${stateFile}.tmp-${process.pid}`
+  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+  renameSync(temporary, stateFile)
+
+  const groups = coordinator.correlate(state)
+  const alerts = coordinator.crossNodeAlerts(groups)
+  console.log('')
+  if (alerts.length === 0) {
+    console.log('没有跨节点高危。')
+  } else {
+    console.log(`跨节点高危 ${alerts.length} 条：`)
+    for (const alert of alerts) console.log(`  [${alert.severity}] ${alert.title}（${alert.key}）— ${alert.nodes.length} 台：${alert.nodes.join(', ')}`)
+  }
+  console.log(`\n协调端状态：${stateFile}`)
+  if (alerts.length > 0) process.exitCode = 2
 }
 
 /** Local coordinator endpoint: POST /v1/bundle, GET /v1/status. Not production TLS. */
@@ -816,6 +898,10 @@ try {
     const stateFile = process.argv[3]
     if (!stateFile) throw new Error('correlate 需要 <state.json>')
     await correlateCommand(resolve(stateFile))
+  } else if (command === 'pull-correlate') {
+    const configFile = process.argv[3]
+    if (!configFile) throw new Error('pull-correlate 需要 <nodes.json>')
+    await pullCorrelate(resolve(configFile))
   } else if (command === 'serve') {
     const stateFile = process.argv[3]
     if (!stateFile) throw new Error('serve 需要 <state.json> [port] [host]')

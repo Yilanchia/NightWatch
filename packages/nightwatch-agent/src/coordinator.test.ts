@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { correlate, emptyState, ingestBundle, registerNode } from './coordinator.js'
+import { correlate, crossNodeAlerts, emptyState, ingestBundle, registerNode } from './coordinator.js'
 import { buildBundle } from './export.js'
 import { ensureIdentity } from './identity.js'
 import { WatchStore } from './store.js'
@@ -190,4 +190,26 @@ test('a future-dated bundle is refused by the freshness check', () => {
   } finally {
     n.cleanup()
   }
+})
+
+test('crossNodeAlerts keeps only a high finding seen on more than one node', () => {
+  const finding = (nodeId: string, key: string, severity: string, title: string) => ({
+    id: `${nodeId}:${key}`, key, kind: 'k', severity, status: 'candidate', title, nodeId, ingestedAt: 0,
+  })
+  const groups = [
+    // cross-node high: both nodes allow root login
+    { key: 'ssh:permitrootlogin', kind: 'ssh_root_login', crossNode: true, nodes: ['A', 'B'],
+      findings: [finding('A', 'ssh:permitrootlogin', 'high', 'root 登录'), finding('B', 'ssh:permitrootlogin', 'high', 'root 登录')] },
+    // single node high: not cross-node, dropped
+    { key: 'tcp:3306', kind: 'new_listen_port', crossNode: false, nodes: ['A'],
+      findings: [finding('A', 'tcp:3306', 'high', '新端口')] },
+    // cross-node but only medium: below the high floor, dropped
+    { key: 'ssh:authorized_key:x', kind: 'ssh_authorized_key_added', crossNode: true, nodes: ['A', 'B'],
+      findings: [finding('A', 'ssh:authorized_key:x', 'medium', '新公钥'), finding('B', 'ssh:authorized_key:x', 'medium', '新公钥')] },
+  ]
+  const alerts = crossNodeAlerts(groups as never)
+  assert.equal(alerts.length, 1)
+  assert.equal(alerts[0]!.key, 'ssh:permitrootlogin')
+  assert.deepEqual(alerts[0]!.nodes, ['A', 'B'])
+  assert.equal(alerts[0]!.severity, 'high')
 })

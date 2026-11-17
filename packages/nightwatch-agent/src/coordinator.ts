@@ -207,3 +207,38 @@ export function correlate(state: CoordinatorState): CorrelatedGroup[] {
     }))
     .sort((left, right) => Number(right.crossNode) - Number(left.crossNode) || left.key.localeCompare(right.key))
 }
+
+export interface CrossNodeAlert {
+  readonly key: string
+  readonly kind: string
+  readonly nodes: readonly string[]
+  /** Highest severity seen for this fact across nodes. */
+  readonly severity: string
+  readonly title: string
+}
+
+const SEVERITY_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 }
+
+/**
+ * The actionable subset of correlation: a fact that is a finding on more than one node and reaches
+ * `minimum` severity. This is what makes a防护网 worth more than two separate alert lists — "both
+ * of your machines allow root login" is one systemic finding, not two coincidences.
+ */
+export function crossNodeAlerts(groups: readonly CorrelatedGroup[], minimum: string = 'high'): CrossNodeAlert[] {
+  const floor = SEVERITY_RANK[minimum] ?? 2
+  const alerts: CrossNodeAlert[] = []
+  for (const group of groups) {
+    if (!group.crossNode) continue
+    let severity = 'low'
+    let title = group.key
+    for (const finding of group.findings) {
+      if ((SEVERITY_RANK[finding.severity] ?? 0) >= (SEVERITY_RANK[severity] ?? 0)) {
+        severity = finding.severity
+        title = finding.title
+      }
+    }
+    if ((SEVERITY_RANK[severity] ?? 0) < floor) continue
+    alerts.push({ key: group.key, kind: group.kind, nodes: group.nodes, severity, title })
+  }
+  return alerts
+}
