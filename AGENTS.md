@@ -33,7 +33,7 @@
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md` |
 | 7 天验收机 | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`；`nightwatch-daemon.service` 每 1440 分钟巡检，`nightwatch-panel.service` 只读面板仅绑 `127.0.0.1:3092`；见 `docs/服务器验收-2026-11-10.md`、`docs/发布-2026-11-17.md` |
 
-最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **98 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
+最近验证（2026-11-17）：**v0.1.0 已发布并部署**；`pnpm test` **107 通过**；`smoke` / `selfcheck` / `egress-probe` 通过；
 验收机 7 天观察完成（11-10 → 11-17，8 轮全部 ok、8 份日报），`acceptance` 本机副本与服务器上各一次全 PASS；
 验收机 daemon 已换新代码（13:56），只读面板 `nightwatch-panel.service` 常驻 `127.0.0.1:3092`；
 `nightwatch investigate` 已用真模型在临时副本跑通（1 条 judgment、pending 减 1，失败保留）；
@@ -65,6 +65,7 @@
 | `src/investigation.ts` | 预算内 read→observe→decide 循环 + 可插拔 Reasoner（桩/模型） |
 | `src/trigger.ts` | 新发现/复发自动入队 pending；按 findingId 去重、done 出队 |
 | `src/alerts.ts` | 确定性高危告警队列：severity>=high、去重、复发单列、ack 出队 |
+| `src/notify.ts` | 出站通知：告警纪律（分级/限频/安静时段/升级）+ 投影脱敏 + 可插拔 sink；默认只写本地文件不外发 |
 | `src/consumer.ts` | pending 消费者：跑调查，只有真的落 judgment 才 done，失败保留 |
 | `src/panel.ts` | 只读面板：本地 HTTP `/api/summary`、`/api/findings`、`/api/timeline`、`/api/investigations`、`/api/reports` + 单页 |
 | `src/coordinator.ts` | 协调端原型：验签、节点登记、按 (node, finding) 幂等摄入、按 key 跨端关联 |
@@ -157,7 +158,7 @@ node scripts/nightwatch.mjs dump
 
 ## 交接时的状态
 
-- 代码、测试（98）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
+- 代码、测试（107）、smoke / selfcheck / egress-probe / acceptance 都是好的；版本 `0.1.0`；核心模块不依赖 DSH。
 - P0 全部修完（1–6）；run 记录、健康查询、基线完整性、退出码、恢复语义、配置统一、内置调度、SSH 生效配置已落地。
 - M0 已落地：`@nightwatch/standalone` + 强制力探针 + 插件级 PDP（未声明/write/需审批一律拒绝；名称盲区已关闭）。
 - Task A 已落地：`projection.ts` + `scripts/egress-probe.mjs`（正反两组通过）。
@@ -172,7 +173,10 @@ node scripts/nightwatch.mjs dump
 - M1 原型：身份 + 摘要 + 显式登记 + 能力/seq + 协调端摄入/关联 + 本地 HTTP 传输（非 TLS）。
 - 首台验收机 daemon 连续巡检（2026-11-10 → 11-17，8 轮全 ok）；`acceptance` 全 PASS。
 - 发布：✅ `v0.1.0` 已于 2026-11-17 打 tag 并部署（`docs/发布-2026-11-17.md`）；写路径继续关。
-- 台面上的活：复发/处置后重查、限频/安静时段/升级阶梯/出站通道、隔离演练、M1 TLS；别先接 osquery。
+- 告警纪律已落地：`notify.ts` + `nightwatch notify`（分级/限频/安静时段/升级、投影脱敏、已发不重发）；
+  出站 sink 默认只写本地文件，真设备通道（F2，自建不 link `@fairy/link`）与复发/处置后重查待做。
+- 跨端防重放已加固：`ingestBundle` 拒绝更旧序号（同序号幂等仍放行）；`verifyBundle` 可选新鲜度校验（未来/过期）。
+- 台面上的活：F2 自建出站通道 + fairyLink 确认服务、复发/处置后重查、面板 P1 展示判断/告警、隔离演练、M1 TLS；别先接 osquery。
 
 ---
 

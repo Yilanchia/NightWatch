@@ -604,6 +604,57 @@ async function alertsCommand(home, action, id) {
   }
 }
 
+/**
+ * Drain open high-severity alerts through the notification discipline to a sink. Default sink is a
+ * local file (no egress); a real device channel is the self-built F2 layer. Only a redacted summary
+ * leaves the store — never evidence. Acknowledged alerts are never re-notified.
+ */
+async function notifyCommand(home) {
+  const notify = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'notify.js')).href)
+  const alerts = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'alerts.js')).href)
+  const judgmentMod = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'judgment.js')).href)
+  const identity = await import(pathToFileURL(join(root, 'packages', 'nightwatch-agent', 'dist', 'identity.js')).href)
+  const { store } = await openReadCore(home)
+  try {
+    const open = alerts.loadOpenAlerts(join(home, 'alerts.jsonl'))
+    if (open.length === 0) {
+      console.log('没有未确认的高危告警，无需通知。')
+      return
+    }
+    const findings = new Map()
+    for (const alert of open) {
+      const finding = store.findings('id = ?', alert.findingId)[0]
+      if (finding) findings.set(alert.findingId, finding)
+    }
+    const latest = new Map()
+    for (const [findingId, list] of judgmentMod.judgmentsByFinding(join(home, 'judgments.jsonl'))) {
+      latest.set(findingId, list[list.length - 1])
+    }
+    const num = (name, fallback) => {
+      const value = Number(process.env[name])
+      return Number.isFinite(value) ? value : fallback
+    }
+    const policy = {
+      minIntervalMs: num('NIGHTWATCH_NOTIFY_MIN_MINUTES', 60) * 60_000,
+      escalateAfterMs: num('NIGHTWATCH_NOTIFY_ESCALATE_MINUTES', 60) * 60_000,
+      ...(process.env.NIGHTWATCH_QUIET_START !== undefined ? { quietStartHour: num('NIGHTWATCH_QUIET_START', 23) } : {}),
+      ...(process.env.NIGHTWATCH_QUIET_END !== undefined ? { quietEndHour: num('NIGHTWATCH_QUIET_END', 7) } : {}),
+    }
+    const node = identity.ensureIdentity(home).id
+    const sentPath = join(home, 'notifications.jsonl')
+    const sink = process.env.NIGHTWATCH_NOTIFY_CONSOLE === '1' ? notify.consoleSink : notify.fileSink(join(home, 'notifications-out.jsonl'))
+    const result = await notify.runNotify(
+      { node, openAlerts: open, sent: notify.loadSent(sentPath), findings, judgments: latest, now: Date.now(), policy },
+      sink,
+      sentPath,
+    )
+    for (const line of result.lines) console.log(line)
+    console.log(`通知：发送 ${result.delivered}（升级 ${result.escalated}）、抑制 ${result.suppressed}；通道 ${sink.name}`)
+  } finally {
+    store.close()
+  }
+}
+
 /** Read-only local panel over the materialized view (reach it through an SSH tunnel). */
 async function panelCommand(home, port, host) {
   const { store } = await openReadCore(home)
@@ -721,6 +772,10 @@ try {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
     await alertsCommand(home, process.argv[4], process.argv[5])
+  } else if (command === 'notify') {
+    const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
+    if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
+    await notifyCommand(home)
   } else if (command === 'tick' || command === 'baseline') {
     const home = resolve(process.argv[3] ?? process.env.NIGHTWATCH_HOME ?? join(root, '.nightwatch-home'))
     if (/[^\x00-\x7f]/u.test(home)) throw new Error(`Nightwatch home must be an ASCII path, got ${home}`)
