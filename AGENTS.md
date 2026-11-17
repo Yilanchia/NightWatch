@@ -30,7 +30,7 @@
 | 启动器 | `scripts/nightwatch.mjs`（profile `nightwatch`，home `.nightwatch-home/`，端口 3091） |
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
-| 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md` |
+| 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md`、`docs/AI调查agent与面板-实施方案.md`、`docs/交接-2026-11-17-多端值守与发布.md`（**多端值守落地 + v0.2.0 发布清单，发布由 DeepSeek 执行**） |
 | 7 天验收机（node A） | `NODE_A_IP`（Ubuntu 22.04 / 2C4G），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`；`nightwatch-daemon.service` 每 1440 分钟巡检，`nightwatch-panel.service` 只读面板仅绑 `127.0.0.1:3092`；节点 id `nw-LFW505Jt0c3B`；见 `docs/服务器验收-2026-11-10.md`、`docs/发布-2026-11-17.md` |
 | 第二节点（node B） | `NODE_B_IP`（Ubuntu 24.04 / 2C2G，同机跑博客 + 外部项目，**只读不碰**），代码 `/opt/nightwatch`，home `/var/lib/nightwatch`，`nightwatch-daemon.service` 每 1440 分钟；节点 id `nw-d25kRkC80eDT`。两台都用 `~/.ssh/nightwatch_deploy` key 登录（已追加进各自 root 的 authorized_keys，未碰 sshd） |
 
