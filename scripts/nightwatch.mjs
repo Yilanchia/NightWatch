@@ -826,12 +826,28 @@ async function daemon(home, intervalMinutes) {
   const intervalMs = minutes * 60_000
   const { core, store } = await openCore(home)
   let stopping = false
+  let wake = null
   const stop = () => {
     stopping = true
+    // Break the current sleep immediately; otherwise systemd stop waits up to a minute.
+    if (wake) {
+      const resume = wake
+      wake = null
+      resume()
+    }
   }
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const sleep = (ms) =>
+    new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer)
+        if (wake === done) wake = null
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      wake = done
+    })
   const runOnce = async () => {
     try {
       const result = core.runInspection({ store, config: coreConfig(home) }, { trigger: 'scheduler' })
