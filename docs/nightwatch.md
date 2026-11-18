@@ -28,6 +28,32 @@ node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实�
 所以它既能被 cron/systemd 调用，也能被 agent 工具复用。采集失败时 `tick` 退出码为 1，
 日报里写明检查盲区。
 
+## 多端值守
+
+两台及以上机器时：每台各自跑 `daemon`，各自 `export` 签名摘要（发现 + 健康，**不含原始事实/证据**），
+协调端用 SSH 把摘要拉齐后按事实 key 关联。
+
+```bash
+# 协调端（node A）：nodes.json 里列 local 节点 + 远端节点
+node scripts/nightwatch.mjs pull-correlate /var/lib/nightwatch-coord/nodes.json
+# 跨端高危退出码 2；systemd 配 SuccessExitStatus=2
+```
+
+- 传输用 SSH（加密），**不用** `serve` / `push` 那个非 TLS 的 HTTP 原型。
+- 远端 key 在目标机 `authorized_keys` 里锁成 `command="… export …",no-pty,no-agent-forwarding,no-port-forwarding`，
+  失陷也只能读摘要。
+- `ingestBundle` 拒绝更旧序号（重放/乱序），同序号幂等；`verifyBundle` 可选新鲜度。
+- 协调端状态是唯一汇总，可从各节点 bundle 重建；不要手工改。
+- 面板加 `NIGHTWATCH_COORD_STATE=<coordinator-state.json>` 后显示"多端防护网"（节点 + 跨节点关联）。
+
+## 告警与出站
+
+- `alerts.jsonl`：`severity>=high` 的发现入队，去重、复发单列，`nightwatch alerts <home> [ack <id>]` 管理。
+- `notify.ts`：分级（high/urgent）、限频（`NIGHTWATCH_NOTIFY_MIN_MINUTES`，默认 60）、
+  升级（`NIGHTWATCH_NOTIFY_ESCALATE_MINUTES`，默认 60）、安静时段（`NIGHTWATCH_QUIET_START` / `_END`）。
+- 出口投影脱敏后才出网；默认 sink 只写 `notifications-out.jsonl`；配了 `NIGHTWATCH_PUSH_URL`
+  （`NIGHTWATCH_PUSH_FORMAT=json|wecom|feishu|text`）才走内置 HTTPS 推送，不引第三方依赖。
+
 ## 配置
 
 `packages/nightwatch-host/cordis.patch.yml` 是宿主层；`.nightwatch-home/profiles/nightwatch/cordis.patch.yml`
@@ -69,11 +95,14 @@ node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实�
    报告把失败写成“检查盲区”，`takeDiff` 不再把没读到说成“消失”；规则侧的完整复核仍在补；
 3. 执行只开一条窄路：仅三种 SSH 配置改行，文件路径来自配置而不是模型；工具名命中 guard 的 `apply` 规则，判 `destructive`，没人回答就拒绝。备份、逐行校验、失败回滚，**不重启服务**（reload 是人的一步）；以非 root 运行时读不到 `/etc/ssh/sshd_config`，会直接拒绝；
 4. `.env`、令牌、私钥不落库；authorized_keys 只存算法和指纹；
-5. 采集到的文本是数据，不是指令。
+5. 采集到的文本是数据，不是指令；
+6. 跨端只同步签名摘要，证据不出节点；协调端状态可重建；推送出网前过投影脱敏。
 
 ## 已知问题
 
-评审 P0 已全部处理（见 [2026-11-09-工作记录.md](2026-11-09-工作记录.md)）；还欠 M0 宿主显式组合落地、M2 常驻调度与健康查询、7 天观察。完整清单见根目录 [项目评审-2026-11-09.md](../项目评审-2026-11-09.md)，改造顺序见 [DSH改造与后续实施方案.md](DSH改造与后续实施方案.md)。
+评审 P0 已全部处理（见 [2026-11-09-工作记录.md](2026-11-09-工作记录.md)）。当前状态：
+v0.1.0 已发布；v0.2.0 多端值守在等 node B 的 5 日观察窗（见 [发布-v0.2.0.md](发布-v0.2.0.md)）。
+面板鉴权、写路径隔离演练、真模型常驻节点、TLS 传输原型仍后置。
 
 ## 设计材料
 

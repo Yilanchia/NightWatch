@@ -21,11 +21,14 @@
 
 依赖方向单向：Nightwatch 依赖 guard，guard 不知道 Nightwatch 存在。
 
-## 现状（2026-11-12，评审后 + 首台验收机）
+## 现状（2026-11-18，v0.2.0 候选）
 
-**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**只读面板** `nightwatch panel`（本地 HTTP + 单页，SSH 隧道访问，无写接口）；**跨端摘要与协调端原型**（节点身份 + `export` / `verify` / `register` / `ingest` / `serve` / `push` / `correlate`，证据不出节点）；**最小宿主** `@nightwatch/standalone` + 强制力探针 + 插件级 PDP；**有界调查** `@nightwatch/analyst` + investigator（预算、UNTRUSTED 前缀、推断注释）；**一次性审批**（owner key 绑定提案/变更/文件状态，防重放）。
+**已经具备**：只读采集（端口 / SSH / 备份）、`watch.jsonl` + SQLite 视图、基线/差分、日报、修复提案、窄执行（三种 SSH 改行，过 guard）；**无模型巡检入口** `nightwatch tick`——采集 → 落盘 → 规则 → 状态复核 → 日报，全程不依赖 DSH 会话或模型；**内置调度** `nightwatch daemon`（单实例写锁、重启补跑一次、不重叠、SIGTERM 立即停）；**run 记录与健康查询**（`watch_health` / `nightwatch health`）；**时间线** `watch_timeline` / `nightwatch timeline`；**只读面板** `nightwatch panel`（本地 HTTP + 单页，SSH 隧道访问，无写接口，可开多端防护网视图）；**跨端摘要与协调端**（节点身份 + `export` / `verify` / `register` / `ingest` / `correlate` / `pull-correlate`，证据不出节点）；**确定性告警队列 + 告警纪律**（`alerts.ts` / `notify.ts`：分级、限频、安静时段、升级、投影脱敏、可插拔 sink）；**出站推送 stage 1**（`httpsSink`，纯内置 `node:https`，json / wecom / feishu / text）；**最小宿主** `@nightwatch/standalone` + 强制力探针 + 插件级 PDP；**有界调查** `@nightwatch/analyst` + investigator（预算、UNTRUSTED 前缀、推断注释）；**一次性审批**（owner key 绑定提案/变更/文件状态，防重放）。
 
-**首台 Linux 验收机**已上线（`NODE_A_IP`，Ubuntu 22.04），内置 `daemon` 每 24h 巡检，7 天观察从 2026-11-10 开始。部署与验收点见 [docs/服务器验收-2026-11-10.md](docs/服务器验收-2026-11-10.md)。
+**两台 Linux 验收机**已上线（2026-11-17）：
+`NODE_A_IP`（node A，协调端 + 节点）与 `NODE_B_IP`（node B，节点；同机博客/外部项目 只读不碰），
+各自内置 `daemon` 每 24h 巡检。v0.2.0 的发布门槛是 node B 连续 5 个干净每日记录（详见
+[docs/发布-v0.2.0.md](docs/发布-v0.2.0.md)）。v0.1.0 的 7 天验收见 [docs/发布-2026-11-17.md](docs/发布-2026-11-17.md)。
 
 **已知问题**：
 
@@ -37,6 +40,43 @@
 6. ~~历史日报混入当前~~：已修。按目标日期取当时的观测/基线/发现。
 
 所以现在它是**可无模型跑一轮、有健康记录与时间线的闭环原型**；还不是“常驻守夜闭环”（内置调度与恢复语义仍在做）。完整评审见 [项目评审-2026-11-09.md](项目评审-2026-11-09.md)，改造方案见 [docs/DSH改造与后续实施方案.md](docs/DSH改造与后续实施方案.md)，本轮记录见 [docs/2026-11-09-工作记录.md](docs/2026-11-09-工作记录.md)。
+
+## 多端值守（两台真机）
+
+跨端**只走 SSH + 签名摘要**，不走那个非 TLS 的 HTTP 传输原型；bundle 不含 facts / evidence / detail。
+
+```bash
+# 节点侧：导出签名摘要（无原始证据）
+node scripts/nightwatch.mjs export /var/lib/nightwatch 7
+
+# 协调端：按 nodes.json 用 SSH 拉各节点摘要 → 登记 → 摄入 → 关联
+node scripts/nightwatch.mjs pull-correlate /var/lib/nightwatch-coord/nodes.json
+# 跨端高危时退出码 2；systemd 用 SuccessExitStatus=2 当信号而不是失败
+```
+
+`nodes.json` 形如（自己复制一份私有配置，别提交真 IP / key）：
+
+```json
+{
+  "stateFile": "/var/lib/nightwatch-coord/coordinator-state.json",
+  "bundleDir": "/var/lib/nightwatch-coord/bundles",
+  "nodes": [
+    { "id": "acceptance", "local": true, "home": "/var/lib/nightwatch", "days": 7 },
+    { "id": "blog", "ssh": "root@NODE_B_IP", "home": "/var/lib/nightwatch",
+      "codeDir": "/opt/nightwatch", "key": "/root/.ssh/nightwatch_coord", "days": 7 }
+  ]
+}
+```
+
+安全约定：
+
+- node A → node B 的 key 在 node B 的 `authorized_keys` 里锁成
+  `command="… export …",no-pty,no-agent-forwarding,no-port-forwarding`——只能读摘要。
+- 协调端状态 `coordinator-state.json` 是唯一汇总，可从 bundle 重建，不手工改；
+  `ingestBundle` 拒绝更旧序号，重放/乱序进不来。
+- 面板多端视图：`NIGHTWATCH_COORD_STATE=<coordinator-state.json> node scripts/nightwatch.mjs panel …`，
+  单页里多出"多端防护网"区（节点清单 + 跨节点关联 + 跨端高危高亮）。
+- 推送默认不外发：没配 `NIGHTWATCH_PUSH_URL` 时 sink 只写本地文件；接了 webhook 才出网。
 
 ## 跑起来
 
@@ -111,6 +151,8 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 | `node scripts/nightwatch.mjs panel <home> [port] [host]` | 只读面板（默认 127.0.0.1:3092，SSH 隧道访问） |
 | `node scripts/nightwatch.mjs investigate <home> [limit]` | 消费 pending 队列（analyst 只读调查；失败保留） |
 | `node scripts/nightwatch.mjs alerts <home> [ack <id>]` | 列出/确认确定性告警 |
+| `node scripts/nightwatch.mjs notify <home>` | 按告警纪律（分级/限频/安静时段/升级）发送待发高危告警；默认只写本地文件 |
+| `node scripts/nightwatch.mjs pull-correlate <nodes.json>` | 本地：SSH 拉各节点签名摘要 → 登记/摄入 → 跨节点关联；跨端高危退出码 2 |
 | `node scripts/nightwatch.mjs version` | 打印版本 |
 | `node scripts/nightwatch.mjs selfcheck` | 启动最小宿主：强制力探针（工具面 / 拒绝门 / 名称盲区）+ PDP |
 | `node scripts/egress-probe.mjs` | 出口投影探针：假模型端点 + canary，正反两组 |
@@ -120,9 +162,12 @@ home 默认 `.nightwatch-home/`（已 gitignore）：
 
 ```
 nightwatch
-├─ packages/nightwatch-agent   @nightwatch/agent   采集、存储、规则、报告、提案/执行
+├─ packages/nightwatch-agent   @nightwatch/agent   采集、存储、规则、报告、提案/执行、告警、协调端
 │  └─ src/inspect.ts          巡检管线（不 import DSH；tick 直接调用）
 │  └─ src/health.ts           采集健康：ok / partial / failed
+│  └─ src/notify.ts           告警纪律 + 投影脱敏 + sink（console/file/https）
+│  └─ src/coordinator.ts      跨端：验签、登记、幂等摄入、按 key 关联
+│  └─ src/panel.ts            只读面板（含多端防护网视图）
 ├─ packages/nightwatch-host    @nightwatch/host    宿主 bundle：guard + agent
 ├─ scripts/nightwatch.mjs     启动器：自己的 home / profile / 端口；含 tick / baseline
 ├─ docs/nightwatch.md         配置、数据与安全边界

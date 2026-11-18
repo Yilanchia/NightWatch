@@ -1,6 +1,6 @@
 {
   "name": "@nightwatch/analyst",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nightwatch analyst bundle: read-only tools plus the bounded investigator. Layered over a headless profile; no shell access is granted to the model by design.",
   "private": true,
   "type": "module",

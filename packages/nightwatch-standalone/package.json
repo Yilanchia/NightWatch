@@ -1,6 +1,6 @@
 {
   "name": "@nightwatch/standalone",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nightwatch headless host bundle: an explicit Cordis tree with no shell, no session, no model and no web app.",
   "private": true,
   "type": "module",

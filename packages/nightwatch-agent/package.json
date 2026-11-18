@@ -1,6 +1,6 @@
 {
   "name": "@nightwatch/agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nightwatch (守夜人): read-only defence for the machine it lives on — evidence log, baseline, diff, report and repair proposals.",
   "private": true,
   "type": "module",
