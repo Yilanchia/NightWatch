@@ -22,4 +22,9 @@
 
 ## 怎么标
 
-提交里用 `Co-authored-by: DeepSeek Harness <dsh-agent@users.noreply.github.com>` 记录 AI 的共同参与。
+提交里用 `Co-authored-by: DeepSeek Harness <ai@nightwatch.local>` 记录 AI 的共同参与
+（这个地址不是 GitHub 账号，只作署名用，避免把提交算到别人头上）。
+
+---
+
+本文件与发布记录由 **DeepSeek Harness** 维护；内容与最终修改权在项目主人。
