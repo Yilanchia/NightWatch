@@ -2,14 +2,14 @@
 
 守夜人网络攻击防御 agent 的配置、数据与安全边界。
 
-- 独立宿主：`@nightwatch/host`，只装 `@fairy/guard`（只读 link）+ `@nightwatch/agent`
+- 独立宿主：`@nightwatch/host`，只读消费一个外部的策略 guard 包（不随本仓库分发）+ `@nightwatch/agent`
 - 自己的 home：`.nightwatch-home/`（默认）
 - 自己的端口：3091（`NIGHTWATCH_PORT` 可改）
 - 自己的启动器：`scripts/nightwatch.mjs`
 
 ## 跑起来
 
-```powershell
+```bash
 pnpm install
 npx tsc -b
 node scripts/nightwatch.mjs smoke
@@ -18,7 +18,7 @@ node scripts/nightwatch.mjs web
 
 无模型的巡检入口（不需要 DSH、不需要 API key）：
 
-```powershell
+```bash
 node scripts/nightwatch.mjs baseline <home>   # 采一次并记为基线
 node scripts/nightwatch.mjs tick <home>       # 采集 → 落盘 → 规则 → 状态复核 → 日报
 node scripts/nightwatch.mjs timeline <home> <key> [days]  # 回放一个事实的时间线
@@ -62,7 +62,7 @@ node scripts/nightwatch.mjs pull-correlate /var/lib/nightwatch-coord/nodes.json
 ```yaml
 - id: nightwatch-agent
   config:
-    backupPaths: ['backups', '/var/backups']
+    backupPaths: ['/var/backups', './backups']
     backupStaleHours: 36
 ```
 
@@ -106,4 +106,4 @@ v0.1.0 已发布；v0.2.0 多端值守在等 node B 的 5 日观察窗（见 [�
 
 ## 设计材料
 
-- 构思与调研：`nightwatch\外部项目-Watch-构思-v2.md`（项目当时叫 Nightwatch）
+- 设计文档：[design.md](design.md)

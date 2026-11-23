@@ -13,3 +13,6 @@ dist/
 !.env.example
 nodes.json
 .nw-coordinator/
+
+# Internal working notes: design history, ops logs, handoff. Keep out of the public repo.
+internal/
