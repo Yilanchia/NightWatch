@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Nightwatch's launcher. Nightwatch is a standalone defence agent: its own home, profile,
-// bundle and port. It never reads or writes another project's `.fairy-home`; the only shared
-// thing is `@fairy/guard`, consumed read-only from its own repository.
+// bundle and port. It never reads or writes another project's home; the only shared piece is
+// `@fairy/guard`, consumed read-only from its own repository.
 //
 //   node scripts/nightwatch.mjs setup   create the isolated `nightwatch` profile and install the bundle
 //   node scripts/nightwatch.mjs dump    print the composed plugin tree
