@@ -1,5 +1,7 @@
 # 守夜人 · Nightwatch
 
+[English](README.en.md) | **中文**
+
 > 只读的主机安全值守 agent：基线差分、只追加证据、每日巡检、多节点关联。只提案，不自动修复。
 
 守夜人盯着你自己的 Linux 主机：定期读一次端口、SSH 生效配置和备份状态，把变化写进只追加的证据日志，
@@ -133,8 +135,3 @@ node scripts/nightwatch.mjs pull-correlate ./nodes.json
 - [docs/nightwatch.md](docs/nightwatch.md)：配置、数据与安全边界
 - [docs/design.md](docs/design.md)：多端防护网设计
 - [docs/CHANGELOG.md](docs/CHANGELOG.md)：版本变更
-
-## 贡献
-
-见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。守夜人是人与 AI 结对完成的项目：
-方向、边界、验收与发布由维护者决定，实现与验证由 AI 结对执行。
