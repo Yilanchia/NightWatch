@@ -28,6 +28,7 @@
 | analyst | `packages/nightwatch-analyst`（`@nightwatch/analyst`，headless + guard/agent/investigator；有界只读调查） |
 | investigator 入口 | `packages/nightwatch-investigator`（`@nightwatch/investigator`，re-export agent/investigator） |
 | 启动器 | `scripts/nightwatch.mjs`（profile `nightwatch`，home `.nightwatch-home/`，端口 3091） |
+| 远端 | `origin` = <https://github.com/Yilanchia/NightWatch>（`main` + `v0.1.0` / `v0.2.0` tag；文档里服务器 IP 已换成 `NODE_A_IP` / `NODE_B_IP` 占位） |
 | 文档 | `README.md`、`docs/nightwatch.md` |
 | 设计/调研/评审 | `外部项目-Watch-构思-v2.md`、`agent-memory-调研.md`、`项目评审-2026-11-09.md` |
 | 本轮产出 | `docs/2026-11-09-工作记录.md`、`docs/m0-host-research.md`、`docs/DSH改造与后续实施方案.md`、`docs/强制力探针与DSH改造-实施文档.md`、`docs/AI调查agent与面板-实施方案.md`、`docs/交接-2026-11-17-多端值守与发布.md`、`docs/发布-v0.2.0.md`（**v0.2.0 候选与发布清单**）、`docs/发布-2026-11-17.md`（v0.1.0） |

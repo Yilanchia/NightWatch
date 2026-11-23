@@ -6,6 +6,7 @@
 - 英文：**Nightwatch**（目录、包名、代码里用这个）
 - 目录：`nightwatch`
 - 包：`@nightwatch/agent`、`@nightwatch/host`
+- 仓库：<https://github.com/Yilanchia/NightWatch>
 
 它只读采集这台机器，把历史写成只追加的证据日志，每天说清楚"变了什么、为什么值得看"；每条结论都带证据。执行能力只有一条很窄的路，且**不建议现在启用**（见"现状"）。
 
