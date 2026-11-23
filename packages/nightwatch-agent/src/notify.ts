@@ -236,7 +236,7 @@ export function fileSink(path: string): NotificationSink {
 /**
  * Device-channel push over built-in HTTPS (F2 stage 1). Zero new dependencies: node:https/http
  * only. The projected (already redacted) message is POSTed to a relay the owner controls; `format`
- * shapes the body for common phone-push bots. Self-built: it never links @fairy/link. The two-way
+ * shapes the body for common phone-push bots. Self-built: it never links an external messaging SDK. The two-way
  * confirm (phone approves inline) is stage 2; here confirm still falls back to the CLI approval.
  */
 export type PushFormat = 'json' | 'wecom' | 'feishu' | 'text'

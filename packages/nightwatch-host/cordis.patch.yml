@@ -1,8 +1,8 @@
 # Nightwatch's own host layer.
 #
-# Nightwatch is a standalone defence agent: it mounts the shared guard (one human gate) and the
-# agent, and nothing else. It does not mount another project's life, persona, senses or channel.
-# The only shared thing is @fairy/guard, consumed read-only from its own repository.
+# Nightwatch is a standalone defence agent: it mounts the shared policy guard (one human gate)
+# and the agent, and nothing else. The guard is an external read-only dependency; no other
+# project's plugins, persona or channels are mounted here.
 #
 # Paths and switches come from `scripts/nightwatch.mjs`, which owns Nightwatch's home
 # (.nightwatch-home). The CLI (tick/health/timeline) reads the same environment variables, so both
